@@ -65,6 +65,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
 
     const keyboard = new InlineKeyboard()
+    keyboard.text("General (all projects)", "project:__general__").row()
     for (const name of projects) {
       keyboard.text(name, `project:${name}`).row()
     }
@@ -73,19 +74,23 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
   bot.callbackQuery(/^project:(.+)$/, async (ctx) => {
     const name = ctx.match![1]
-    const fullPath = join(projectsDir, name)
+    const isGeneral = name === "__general__"
+    const fullPath = isGeneral ? projectsDir : join(projectsDir, name)
+    const displayName = isGeneral ? "general (all projects)" : name
 
-    try {
-      statSync(fullPath)
-    } catch {
-      await ctx.answerCallbackQuery({ text: "Project not found" })
-      return
+    if (!isGeneral) {
+      try {
+        statSync(fullPath)
+      } catch {
+        await ctx.answerCallbackQuery({ text: "Project not found" })
+        return
+      }
     }
 
     const state = getState(ctx.from!.id)
     state.activeProject = fullPath
-    await ctx.answerCallbackQuery({ text: `Switched to ${name}` })
-    await ctx.editMessageText(`Active project: ${name}`)
+    await ctx.answerCallbackQuery({ text: `Switched to ${displayName}` })
+    await ctx.editMessageText(`Active project: ${displayName}`)
   })
 
   bot.command("stop", async (ctx) => {
@@ -95,7 +100,9 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
   bot.command("status", async (ctx) => {
     const state = getState(ctx.from!.id)
-    const project = state.activeProject ? basename(state.activeProject) : "(none)"
+    const project = state.activeProject
+      ? state.activeProject === projectsDir ? "general" : basename(state.activeProject)
+      : "(none)"
     const running = hasActiveProcess(ctx.from!.id) ? "Yes" : "No"
     const sessionCount = state.sessions.size
 
@@ -121,7 +128,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
     const prompt = ctx.message.text
     const sessionId = state.sessions.get(state.activeProject)
-    const projectName = basename(state.activeProject)
+    const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
 
     const events = runClaude(ctx.from!.id, prompt, state.activeProject, sessionId)
     const result = await streamToTelegram(ctx, events, projectName)
