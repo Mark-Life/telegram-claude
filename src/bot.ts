@@ -1,8 +1,9 @@
-import { Bot, InlineKeyboard } from "grammy"
+import { Bot, InlineKeyboard, type Context } from "grammy"
 import { readdirSync, statSync } from "fs"
 import { join, basename } from "path"
 import { runClaude, stopClaude, hasActiveProcess } from "./claude"
 import { streamToTelegram } from "./telegram"
+import { transcribeAudio } from "./transcribe"
 
 type UserState = {
   activeProject: string
@@ -117,8 +118,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     await ctx.reply("Session cleared. Next message starts a fresh conversation.")
   })
 
-  // Text messages -> Claude
-  bot.on("message:text", async (ctx) => {
+  /** Send a prompt to Claude and stream the response */
+  async function handlePrompt(ctx: Context, prompt: string) {
     const state = getState(ctx.from!.id)
 
     if (!state.activeProject) {
@@ -126,7 +127,6 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       return
     }
 
-    const prompt = ctx.message.text
     const sessionId = state.sessions.get(state.activeProject)
     const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
 
@@ -136,6 +136,28 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     if (result.sessionId) {
       state.sessions.set(state.activeProject, result.sessionId)
     }
+  }
+
+  bot.on("message:text", (ctx) => handlePrompt(ctx, ctx.message.text))
+
+  bot.on("message:voice", async (ctx) => {
+    const state = getState(ctx.from!.id)
+
+    if (!state.activeProject) {
+      await ctx.reply("No project selected. Use /projects to pick one.")
+      return
+    }
+
+    const file = await ctx.getFile()
+    const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`
+    const res = await fetch(url)
+    const buffer = Buffer.from(await res.arrayBuffer())
+
+    const status = await ctx.reply("Transcribing...")
+    const prompt = await transcribeAudio(buffer, "voice.ogg")
+    await ctx.api.editMessageText(ctx.chat.id, status.message_id, `[Voice] ${prompt}`)
+
+    await handlePrompt(ctx, prompt)
   })
 
   return bot
