@@ -52,9 +52,46 @@ bun install
 bun run src/index.ts
 ```
 
-Or as a tmux session:
+### 5. Run as a Service (optional)
+
+To keep the bot running across reboots and auto-restart on crashes, set up a systemd user service.
+
+Create `~/.config/systemd/user/telegram-claude.service`:
+
+```ini
+[Unit]
+Description=Telegram Claude Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/telegram-claude
+ExecStart=/path/to/bun run src/index.ts
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/path/to/telegram-claude/.env
+
+[Install]
+WantedBy=default.target
+```
+
+Then enable and start:
+
 ```bash
-tmux new-session -d -s telegram-claude 'cd ~/projects/telegram-claude && bun run src/index.ts'
+# allow service to run without an active login session
+loginctl enable-linger $USER
+
+systemctl --user daemon-reload
+systemctl --user enable telegram-claude
+systemctl --user start telegram-claude
+```
+
+Useful commands:
+
+```bash
+systemctl --user status telegram-claude    # check status
+journalctl --user -u telegram-claude -f    # follow logs
+systemctl --user restart telegram-claude   # restart
 ```
 
 ## Commands
