@@ -116,6 +116,11 @@ export async function streamToTelegram(
       if (event.kind === "text_delta") {
         accumulated += event.text
         await doEdit().catch(() => {})
+      } else if (event.kind === "turn_boundary") {
+        if (accumulated && !accumulated.endsWith("\n\n")) {
+          accumulated += accumulated.endsWith("\n") ? "\n" : "\n\n"
+        }
+        await doEdit().catch(() => {})
       } else if (event.kind === "result") {
         result.sessionId = event.sessionId
         result.cost = event.cost

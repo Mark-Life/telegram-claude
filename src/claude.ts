@@ -28,6 +28,7 @@ type StreamEvent =
 
 export type ClaudeEvent =
   | { kind: "text_delta"; text: string }
+  | { kind: "turn_boundary" }
   | { kind: "result"; text: string; sessionId: string; cost: number; durationMs: number; turns: number }
   | { kind: "error"; message: string }
 
@@ -35,33 +36,40 @@ const userProcesses = new Map<number, AbortController>()
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 
 /** Parse stream-json lines and yield ClaudeEvents */
-function* parseStreamLines(lines: string[]): Generator<ClaudeEvent> {
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
+function createStreamParser() {
+  let hasSeenText = false
 
-    let parsed: StreamEvent
-    try {
-      parsed = JSON.parse(trimmed)
-    } catch {
-      continue
-    }
+  return function* parseStreamLines(lines: string[]): Generator<ClaudeEvent> {
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
 
-    if (
-      parsed.type === "stream_event" &&
-      parsed.event.type === "content_block_delta" &&
-      "delta" in parsed.event &&
-      parsed.event.delta.type === "text_delta"
-    ) {
-      yield { kind: "text_delta", text: parsed.event.delta.text }
-    } else if (parsed.type === "result") {
-      yield {
-        kind: "result",
-        text: parsed.result,
-        sessionId: parsed.session_id,
-        cost: parsed.total_cost_usd,
-        durationMs: parsed.duration_ms,
-        turns: parsed.num_turns,
+      let parsed: StreamEvent
+      try {
+        parsed = JSON.parse(trimmed)
+      } catch {
+        continue
+      }
+
+      if (parsed.type === "assistant" && hasSeenText) {
+        yield { kind: "turn_boundary" }
+      } else if (
+        parsed.type === "stream_event" &&
+        parsed.event.type === "content_block_delta" &&
+        "delta" in parsed.event &&
+        parsed.event.delta.type === "text_delta"
+      ) {
+        hasSeenText = true
+        yield { kind: "text_delta", text: parsed.event.delta.text }
+      } else if (parsed.type === "result") {
+        yield {
+          kind: "result",
+          text: parsed.result,
+          sessionId: parsed.session_id,
+          cost: parsed.total_cost_usd,
+          durationMs: parsed.duration_ms,
+          turns: parsed.num_turns,
+        }
       }
     }
   }
@@ -105,6 +113,7 @@ export async function* runClaude(
     const reader = proc.stdout.getReader()
     const decoder = new TextDecoder()
     let buffer = ""
+    const parseStreamLines = createStreamParser()
 
     while (true) {
       const { done, value } = await reader.read()
