@@ -4,16 +4,52 @@ import type { ClaudeEvent } from "./claude"
 const MAX_MSG_LENGTH = 4000
 const EDIT_INTERVAL_MS = 1500
 
-/** Escape text for Telegram MarkdownV2 */
-function escapeMarkdownV2(text: string) {
-  return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, "\\$1")
+/** Escape HTML special characters */
+function escapeHtml(text: string) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 }
 
-/** Try sending with MarkdownV2, fall back to plain text */
+/** Convert standard Markdown to Telegram-compatible HTML */
+function markdownToTelegramHtml(md: string) {
+  const codeBlocks: string[] = []
+
+  let text = md.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const escaped = escapeHtml(code.replace(/\n$/, ""))
+    const html = lang
+      ? `<pre><code class="language-${lang}">${escaped}</code></pre>`
+      : `<pre>${escaped}</pre>`
+    codeBlocks.push(html)
+    return `\x00CB${codeBlocks.length - 1}\x00`
+  })
+
+  const inlineCodes: string[] = []
+  text = text.replace(/`([^`]+)`/g, (_, code) => {
+    inlineCodes.push(`<code>${escapeHtml(code)}</code>`)
+    return `\x00IC${inlineCodes.length - 1}\x00`
+  })
+
+  text = escapeHtml(text)
+
+  text = text.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+  text = text.replace(/\*(.+?)\*/g, "<i>$1</i>")
+  text = text.replace(/(?<!\w)_(.+?)_(?!\w)/g, "<i>$1</i>")
+  text = text.replace(/~~(.+?)~~/g, "<s>$1</s>")
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+  text = text.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>")
+  text = text.replace(/^&gt;\s?(.+)$/gm, "<blockquote>$1</blockquote>")
+  text = text.replace(/<\/blockquote>\n<blockquote>/g, "\n")
+
+  text = text.replace(/\x00IC(\d+)\x00/g, (_, idx) => inlineCodes[parseInt(idx)])
+  text = text.replace(/\x00CB(\d+)\x00/g, (_, idx) => codeBlocks[parseInt(idx)])
+
+  return text
+}
+
+/** Try sending with HTML, fall back to plain text */
 async function safeEditMessage(ctx: Context, chatId: number, messageId: number, text: string, rawText?: string) {
   const displayText = text || "..."
   try {
-    await ctx.api.editMessageText(chatId, messageId, displayText, { parse_mode: "MarkdownV2" })
+    await ctx.api.editMessageText(chatId, messageId, displayText, { parse_mode: "HTML" })
   } catch {
     try {
       await ctx.api.editMessageText(chatId, messageId, rawText ?? displayText)
@@ -60,15 +96,15 @@ export async function streamToTelegram(
       const chunk = text.slice(0, splitAt)
       accumulated = text.slice(splitAt)
 
-      await safeEditMessage(ctx, chatId, messageId, escapeMarkdownV2(chunk), chunk)
+      await safeEditMessage(ctx, chatId, messageId, markdownToTelegramHtml(chunk), chunk)
       const next = await ctx.api.sendMessage(chatId, "...")
       messageId = next.message_id
       text = accumulated
     }
 
-    const display = final ? formatFinalMessage(text, projectName, result) : escapeMarkdownV2(text)
+    const display = final ? formatFinalMessage(text, projectName, result) : markdownToTelegramHtml(text)
     const rawDisplay = final ? formatFinalMessagePlain(text, projectName, result) : text
-    await safeEditMessage(ctx, chatId, messageId, display || "\\.\\.\\.", rawDisplay || "...")
+    await safeEditMessage(ctx, chatId, messageId, display || "...", rawDisplay || "...")
   }
 
   const editTimer = setInterval(async () => {
@@ -100,11 +136,11 @@ export async function streamToTelegram(
 
 /** Format the final message with metadata footer */
 function formatFinalMessage(text: string, projectName: string, result: StreamResult) {
-  const escaped = escapeMarkdownV2(text)
-  const parts = [escaped]
+  const html = markdownToTelegramHtml(text)
+  const parts = [html]
 
   const meta: string[] = []
-  if (projectName) meta.push(`Project: ${escapeMarkdownV2(projectName)}`)
+  if (projectName) meta.push(`Project: ${escapeHtml(projectName)}`)
   if (result.cost !== undefined) meta.push(`Cost: $${result.cost.toFixed(4)}`)
   if (result.durationMs !== undefined) {
     const secs = (result.durationMs / 1000).toFixed(1)
@@ -114,7 +150,7 @@ function formatFinalMessage(text: string, projectName: string, result: StreamRes
 
   if (meta.length > 0) {
     parts.push("")
-    parts.push(`_${meta.join(" \\| ")}_`)
+    parts.push(`<i>${meta.join(" | ")}</i>`)
   }
 
   return parts.join("\n")
