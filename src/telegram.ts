@@ -10,13 +10,13 @@ function escapeMarkdownV2(text: string) {
 }
 
 /** Try sending with MarkdownV2, fall back to plain text */
-async function safeEditMessage(ctx: Context, chatId: number, messageId: number, text: string) {
+async function safeEditMessage(ctx: Context, chatId: number, messageId: number, text: string, rawText?: string) {
   const displayText = text || "..."
   try {
     await ctx.api.editMessageText(chatId, messageId, displayText, { parse_mode: "MarkdownV2" })
   } catch {
     try {
-      await ctx.api.editMessageText(chatId, messageId, displayText)
+      await ctx.api.editMessageText(chatId, messageId, rawText ?? displayText)
     } catch (err: any) {
       if (!err?.description?.includes("message is not modified")) throw err
     }
@@ -60,14 +60,15 @@ export async function streamToTelegram(
       const chunk = text.slice(0, splitAt)
       accumulated = text.slice(splitAt)
 
-      await safeEditMessage(ctx, chatId, messageId, escapeMarkdownV2(chunk))
+      await safeEditMessage(ctx, chatId, messageId, escapeMarkdownV2(chunk), chunk)
       const next = await ctx.api.sendMessage(chatId, "...")
       messageId = next.message_id
       text = accumulated
     }
 
     const display = final ? formatFinalMessage(text, projectName, result) : escapeMarkdownV2(text)
-    await safeEditMessage(ctx, chatId, messageId, display || "\\.\\.\\.")
+    const rawDisplay = final ? formatFinalMessagePlain(text, projectName, result) : text
+    await safeEditMessage(ctx, chatId, messageId, display || "\\.\\.\\.", rawDisplay || "...")
   }
 
   const editTimer = setInterval(async () => {
@@ -116,5 +117,23 @@ function formatFinalMessage(text: string, projectName: string, result: StreamRes
     parts.push(`_${meta.join(" \\| ")}_`)
   }
 
+  return parts.join("\n")
+}
+
+/** Plain text version of final message (used as fallback) */
+function formatFinalMessagePlain(text: string, projectName: string, result: StreamResult) {
+  const parts = [text]
+  const meta: string[] = []
+  if (projectName) meta.push(`Project: ${projectName}`)
+  if (result.cost !== undefined) meta.push(`Cost: $${result.cost.toFixed(4)}`)
+  if (result.durationMs !== undefined) {
+    const secs = (result.durationMs / 1000).toFixed(1)
+    meta.push(`Time: ${secs}s`)
+  }
+  if (result.turns !== undefined && result.turns > 1) meta.push(`Turns: ${result.turns}`)
+  if (meta.length > 0) {
+    parts.push("")
+    parts.push(meta.join(" | "))
+  }
   return parts.join("\n")
 }
