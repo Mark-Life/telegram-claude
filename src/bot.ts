@@ -138,7 +138,9 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
   }
 
-  bot.on("message:text", (ctx) => handlePrompt(ctx, ctx.message.text))
+  bot.on("message:text", (ctx) => {
+    handlePrompt(ctx, ctx.message.text).catch((e) => console.error("handlePrompt error:", e))
+  })
 
   bot.on("message:voice", async (ctx) => {
     const state = getState(ctx.from!.id)
@@ -157,7 +159,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const prompt = await transcribeAudio(buffer, "voice.ogg")
     await ctx.api.editMessageText(ctx.chat.id, status.message_id, `[Voice] ${prompt}`)
 
-    await handlePrompt(ctx, prompt)
+    handlePrompt(ctx, prompt).catch((e) => console.error("handlePrompt error:", e))
   })
 
   return bot
