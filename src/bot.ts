@@ -157,7 +157,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
     const status = await ctx.reply("Transcribing...")
     const prompt = await transcribeAudio(buffer, "voice.ogg")
-    await ctx.api.editMessageText(ctx.chat.id, status.message_id, `[Voice] ${prompt}`)
+    await ctx.api.editMessageText(ctx.chat.id, status.message_id, `<blockquote>${prompt}</blockquote>`, { parse_mode: "HTML" })
 
     handlePrompt(ctx, prompt).catch((e) => console.error("handlePrompt error:", e))
   })
