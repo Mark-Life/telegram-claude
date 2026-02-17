@@ -21,20 +21,12 @@ function escapeHtml(text: string) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 }
 
-/** Keyboard shown when no prompt is running */
-function idleKeyboard() {
-  return new Keyboard()
-    .text("/projects").text("/history").row()
-    .text("/new").text("/help").row()
-    .resized().persistent()
-}
-
-/** Keyboard shown while a prompt is running */
-function runningKeyboard() {
-  return new Keyboard()
-    .text("/stop").row()
-    .resized().persistent()
-}
+/** Persistent reply keyboard with all commands */
+const mainKeyboard = new Keyboard()
+  .text("/projects").text("/history").row()
+  .text("/stop").text("/new").row()
+  .text("/status").text("/help").row()
+  .resized().persistent()
 
 /** Extract reply-to-message text and prepend it as context */
 function buildPromptWithReplyContext(ctx: Context, userText: string) {
@@ -112,13 +104,13 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
   bot.command("start", async (ctx) => {
     const state = getState(ctx.from!.id)
     const project = state.activeProject || "(none)"
-    await ctx.reply(`Claude Code bot ready.\nActive project: ${project}\n\nCommands:\n/projects - switch project\n/history - resume a past session\n/stop - kill active process\n/status - current state\n/new - reset session`, { reply_markup: idleKeyboard() })
+    await ctx.reply(`Claude Code bot ready.\nActive project: ${project}\n\nCommands:\n/projects - switch project\n/history - resume a past session\n/stop - kill active process\n/status - current state\n/new - reset session`, { reply_markup: mainKeyboard })
   })
 
   bot.command("projects", async (ctx) => {
     const projects = listProjects(projectsDir)
     if (projects.length === 0) {
-      await ctx.reply(`No projects found in ${projectsDir}`, { reply_markup: idleKeyboard() })
+      await ctx.reply(`No projects found in ${projectsDir}`, { reply_markup: mainKeyboard })
       return
     }
 
@@ -166,7 +158,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
   bot.command("stop", async (ctx) => {
     const stopped = stopClaude(ctx.from!.id)
-    await ctx.reply(stopped ? "Process stopped." : "No active process.", { reply_markup: idleKeyboard() })
+    await ctx.reply(stopped ? "Process stopped." : "No active process.", { reply_markup: mainKeyboard })
   })
 
   bot.command("status", async (ctx) => {
@@ -177,7 +169,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const running = hasActiveProcess(ctx.from!.id) ? "Yes" : "No"
     const sessionCount = state.sessions.size
 
-    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}`, { reply_markup: idleKeyboard() })
+    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}`, { reply_markup: mainKeyboard })
   })
 
   bot.command("help", async (ctx) => {
@@ -193,7 +185,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
         "",
         "Send any text or voice message to chat with Claude in the active project.",
       ].join("\n"),
-      { parse_mode: "HTML", reply_markup: idleKeyboard() },
+      { parse_mode: "HTML", reply_markup: mainKeyboard },
     )
   })
 
@@ -203,7 +195,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       state.activeProject = projectsDir
     }
     state.sessions.delete(state.activeProject)
-    await ctx.reply("Session cleared. Next message starts a fresh conversation.", { reply_markup: idleKeyboard() })
+    await ctx.reply("Session cleared. Next message starts a fresh conversation.", { reply_markup: mainKeyboard })
   })
 
   /** Build paginated history message with inline keyboard */
@@ -250,7 +242,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
     if (!result) {
       const isGlobal = !state.activeProject
-      await ctx.reply(isGlobal ? "No session history found." : "No session history found for this project.", { reply_markup: idleKeyboard() })
+      await ctx.reply(isGlobal ? "No session history found." : "No session history found for this project.", { reply_markup: mainKeyboard })
       return
     }
 
@@ -311,7 +303,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const state = getState(ctx.from!.id)
 
     if (!state.activeProject) {
-      await ctx.reply("No project selected. Use /projects to pick one.", { reply_markup: idleKeyboard() })
+      await ctx.reply("No project selected. Use /projects to pick one.", { reply_markup: mainKeyboard })
       return
     }
 
@@ -335,7 +327,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const state = getState(ctx.from!.id)
 
     if (!state.activeProject) {
-      await ctx.reply("No project selected. Use /projects to pick one.", { reply_markup: idleKeyboard() })
+      await ctx.reply("No project selected. Use /projects to pick one.", { reply_markup: mainKeyboard })
       return
     }
 
