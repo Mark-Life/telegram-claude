@@ -1,4 +1,4 @@
-import type { Context } from "grammy"
+import type { Context, Keyboard } from "grammy"
 import { Marked } from "marked"
 import type { ClaudeEvent } from "./claude"
 
@@ -129,11 +129,17 @@ type StreamResult = {
 
 type MessageMode = "text" | "tools" | "thinking" | "none"
 
+type KeyboardOpts = {
+  startKeyboard?: Keyboard
+  endKeyboard?: Keyboard
+}
+
 /** Stream Claude events into separate Telegram messages by type */
 export async function streamToTelegram(
   ctx: Context,
   events: AsyncGenerator<ClaudeEvent>,
   projectName: string,
+  keyboards?: KeyboardOpts,
 ): Promise<StreamResult> {
   const chatId = ctx.chat!.id
   const result: StreamResult = {}
@@ -145,11 +151,16 @@ export async function streamToTelegram(
   let pendingEdit = false
   let toolLines: string[] = []
   let lastTextMessageId = 0
+  let firstMessageSent = false
 
   /** Send a new Telegram message and track its ID */
   const sendNew = async (text: string, parseMode?: "HTML") => {
     const opts: Record<string, unknown> = {}
     if (parseMode) opts.parse_mode = parseMode
+    if (!firstMessageSent && keyboards?.startKeyboard) {
+      opts.reply_markup = keyboards.startKeyboard
+      firstMessageSent = true
+    }
     const sent = await ctx.api.sendMessage(chatId, text, opts)
     messageId = sent.message_id
     lastEditTime = 0
@@ -279,13 +290,23 @@ export async function streamToTelegram(
     const display = footer ? `${html}\n\n${footer}` : html
     const ok = await safeEditMessage(ctx, chatId, lastTextMessageId, display || "...").catch(() => false)
     if (!ok && footer) {
-      // HTML with footer failed — keep existing styled message, send footer separately
-      await ctx.api.sendMessage(chatId, footer, { parse_mode: "HTML" }).catch(() => {})
+      const footerOpts: Record<string, unknown> = { parse_mode: "HTML" }
+      if (keyboards?.endKeyboard) footerOpts.reply_markup = keyboards.endKeyboard
+      await ctx.api.sendMessage(chatId, footer, footerOpts).catch(() => {})
+    } else if (keyboards?.endKeyboard) {
+      await ctx.api.sendMessage(chatId, formatFooter(projectName, result) || "Done.", { reply_markup: keyboards.endKeyboard }).catch(() => {})
     }
   } else if (!lastTextMessageId && (result.cost !== undefined || result.durationMs !== undefined)) {
-    // No text message was sent -- send footer as standalone
     const footer = formatFooter(projectName, result)
-    if (footer) await ctx.api.sendMessage(chatId, footer, { parse_mode: "HTML" }).catch(() => {})
+    if (footer) {
+      const footerOpts: Record<string, unknown> = { parse_mode: "HTML" }
+      if (keyboards?.endKeyboard) footerOpts.reply_markup = keyboards.endKeyboard
+      await ctx.api.sendMessage(chatId, footer, footerOpts).catch(() => {})
+    } else if (keyboards?.endKeyboard) {
+      await ctx.api.sendMessage(chatId, "Done.", { reply_markup: keyboards.endKeyboard }).catch(() => {})
+    }
+  } else if (keyboards?.endKeyboard) {
+    await ctx.api.sendMessage(chatId, "Done.", { reply_markup: keyboards.endKeyboard }).catch(() => {})
   }
 
   return result

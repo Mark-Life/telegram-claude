@@ -319,7 +319,10 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
 
     const events = runClaude(ctx.from!.id, prompt, state.activeProject, sessionId)
-    const result = await streamToTelegram(ctx, events, projectName)
+    const result = await streamToTelegram(ctx, events, projectName, {
+      startKeyboard: runningKeyboard(),
+      endKeyboard: idleKeyboard(),
+    })
 
     if (result.sessionId) {
       state.sessions.set(state.activeProject, result.sessionId)
