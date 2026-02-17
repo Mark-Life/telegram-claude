@@ -4,7 +4,7 @@ import { join, basename } from "path"
 import { runClaude, stopClaude, hasActiveProcess } from "./claude"
 import { streamToTelegram } from "./telegram"
 import { transcribeAudio } from "./transcribe"
-import { listSessions } from "./history"
+import { listSessions, listAllSessions, getSessionProject } from "./history"
 
 type UserState = {
   activeProject: string
@@ -126,26 +126,30 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
   bot.command("history", async (ctx) => {
     const state = getState(ctx.from!.id)
-    if (!state.activeProject) {
-      await ctx.reply("No project selected. Use /projects to pick one.")
-      return
-    }
+    const isGlobal = !state.activeProject
+    const sessions = isGlobal
+      ? listAllSessions()
+      : listSessions(state.activeProject)
 
-    const sessions = listSessions(state.activeProject)
     if (sessions.length === 0) {
-      await ctx.reply("No session history found for this project.")
+      await ctx.reply(isGlobal ? "No session history found." : "No session history found for this project.")
       return
     }
 
-    const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
     const keyboard = new InlineKeyboard()
     for (const s of sessions) {
       const date = new Date(s.lastActiveAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
-      const label = `${date} — ${s.summary.slice(0, 40)}`
+      const prefix = isGlobal ? `[${s.projectName}] ` : ""
+      const maxSummary = isGlobal ? 30 : 40
+      const label = `${date} — ${prefix}${s.summary.slice(0, maxSummary)}`
       keyboard.text(label, `session:${s.sessionId}`).row()
     }
 
-    await ctx.reply(`Sessions for <b>${escapeHtml(projectName)}</b>:`, {
+    const title = isGlobal
+      ? "Recent sessions (all projects):"
+      : `Sessions for <b>${escapeHtml(state.activeProject === projectsDir ? "general" : basename(state.activeProject))}</b>:`
+
+    await ctx.reply(title, {
       reply_markup: keyboard,
       parse_mode: "HTML",
     })
@@ -155,14 +159,20 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const sessionId = ctx.match![1]
     const state = getState(ctx.from!.id)
 
+    const cachedProject = getSessionProject(sessionId)
+    if (!state.activeProject && cachedProject) {
+      state.activeProject = cachedProject
+    }
+
     if (!state.activeProject) {
       await ctx.answerCallbackQuery({ text: "No project selected" })
       return
     }
 
     state.sessions.set(state.activeProject, sessionId)
+    const projectName = basename(state.activeProject)
     await ctx.answerCallbackQuery({ text: "Session resumed" })
-    await ctx.editMessageText(`Resumed session. Next message continues this conversation.`)
+    await ctx.editMessageText(`Resumed session in <b>${escapeHtml(projectName)}</b>. Next message continues this conversation.`, { parse_mode: "HTML" })
   })
 
   /** Send a prompt to Claude and stream the response */
