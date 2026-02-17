@@ -12,7 +12,7 @@ export type SessionInfo = {
 }
 
 const CLAUDE_PROJECTS_DIR = join(homedir(), ".claude", "projects")
-const MAX_SESSIONS = 10
+const MAX_SESSIONS = 50
 
 /** Cache of sessionId -> projectPath, populated during listing */
 const sessionProjectCache = new Map<string, string>()

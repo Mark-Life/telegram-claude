@@ -13,6 +13,7 @@ type UserState = {
 }
 
 const userStates = new Map<number, UserState>()
+const HISTORY_PAGE_SIZE = 5
 
 /** Escape HTML special characters for Telegram */
 function escapeHtml(text: string) {
@@ -174,20 +175,21 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     await ctx.reply("Session cleared. Next message starts a fresh conversation.", { reply_markup: idleKeyboard() })
   })
 
-  bot.command("history", async (ctx) => {
-    const state = getState(ctx.from!.id)
+  /** Build paginated history message with inline keyboard */
+  function buildHistoryMessage(state: UserState, page: number) {
     const isGlobal = !state.activeProject
     const sessions = isGlobal
       ? listAllSessions()
       : listSessions(state.activeProject)
 
-    if (sessions.length === 0) {
-      await ctx.reply(isGlobal ? "No session history found." : "No session history found for this project.", { reply_markup: idleKeyboard() })
-      return
-    }
+    if (sessions.length === 0) return null
+
+    const totalPages = Math.ceil(sessions.length / HISTORY_PAGE_SIZE)
+    const safePage = Math.max(0, Math.min(page, totalPages - 1))
+    const pageSlice = sessions.slice(safePage * HISTORY_PAGE_SIZE, (safePage + 1) * HISTORY_PAGE_SIZE)
 
     const keyboard = new InlineKeyboard()
-    for (const s of sessions) {
+    for (const s of pageSlice) {
       const date = new Date(s.lastActiveAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
       const prefix = isGlobal ? `[${s.projectName}] ` : ""
       const maxSummary = isGlobal ? 30 : 40
@@ -195,14 +197,53 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       keyboard.text(label, `session:${s.sessionId}`).row()
     }
 
-    const title = isGlobal
-      ? "Recent sessions (all projects):"
-      : `Sessions for <b>${escapeHtml(state.activeProject === projectsDir ? "general" : basename(state.activeProject))}</b>:`
+    const navRow: { text: string; data: string }[] = []
+    if (safePage > 0) navRow.push({ text: "<< Prev", data: `history:${safePage - 1}` })
+    if (safePage < totalPages - 1) navRow.push({ text: "Next >>", data: `history:${safePage + 1}` })
+    if (navRow.length > 0) {
+      for (const btn of navRow) keyboard.text(btn.text, btn.data)
+      keyboard.row()
+    }
 
-    await ctx.reply(title, {
-      reply_markup: keyboard,
+    const pageIndicator = totalPages > 1 ? ` (${safePage + 1}/${totalPages})` : ""
+    const title = isGlobal
+      ? `Recent sessions (all projects)${pageIndicator}:`
+      : `Sessions for <b>${escapeHtml(state.activeProject === projectsDir ? "general" : basename(state.activeProject))}</b>${pageIndicator}:`
+
+    return { text: title, keyboard }
+  }
+
+  bot.command("history", async (ctx) => {
+    const state = getState(ctx.from!.id)
+    const result = buildHistoryMessage(state, 0)
+
+    if (!result) {
+      const isGlobal = !state.activeProject
+      await ctx.reply(isGlobal ? "No session history found." : "No session history found for this project.", { reply_markup: idleKeyboard() })
+      return
+    }
+
+    await ctx.reply(result.text, {
+      reply_markup: result.keyboard,
       parse_mode: "HTML",
     })
+  })
+
+  bot.callbackQuery(/^history:(\d+)$/, async (ctx) => {
+    const page = parseInt(ctx.match![1], 10)
+    const state = getState(ctx.from!.id)
+    const result = buildHistoryMessage(state, page)
+
+    if (!result) {
+      await ctx.answerCallbackQuery({ text: "No sessions found" })
+      return
+    }
+
+    await ctx.editMessageText(result.text, {
+      reply_markup: result.keyboard,
+      parse_mode: "HTML",
+    })
+    await ctx.answerCallbackQuery()
   })
 
   bot.callbackQuery(/^session:(.+)$/, async (ctx) => {
