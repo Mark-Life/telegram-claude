@@ -172,9 +172,10 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
   bot.command("new", async (ctx) => {
     const state = getState(ctx.from!.id)
-    if (state.activeProject) {
-      state.sessions.delete(state.activeProject)
+    if (!state.activeProject) {
+      state.activeProject = projectsDir
     }
+    state.sessions.delete(state.activeProject)
     await ctx.reply("Session cleared. Next message starts a fresh conversation.", { reply_markup: idleKeyboard() })
   })
 
