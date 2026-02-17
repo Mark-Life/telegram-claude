@@ -4,12 +4,12 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/path/to/telegram-claude
-EnvironmentFile=/path/to/telegram-claude/.env
-ExecStart=/path/to/bun run src/index.ts
+WorkingDirectory=/home/user/telegram-claude
+EnvironmentFile=/home/user/telegram-claude/.env
+ExecStart=/home/user/.bun/bin/bun run src/index.ts
 Restart=on-failure
 RestartSec=5
-Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/home/user/.local/bin:/home/user/.bun/bin:/usr/local/bin:/usr/bin:/bin
 
 [Install]
 WantedBy=default.target
