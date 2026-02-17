@@ -150,14 +150,21 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       return
     }
 
-    const file = await ctx.getFile()
-    const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`
-    const res = await fetch(url)
-    const buffer = Buffer.from(await res.arrayBuffer())
+    let prompt: string
+    try {
+      const file = await ctx.getFile()
+      const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`
+      const res = await fetch(url)
+      const buffer = Buffer.from(await res.arrayBuffer())
 
-    const status = await ctx.reply("Transcribing...")
-    const prompt = await transcribeAudio(buffer, "voice.ogg")
-    await ctx.api.editMessageText(ctx.chat.id, status.message_id, `<blockquote>${prompt}</blockquote>`, { parse_mode: "HTML" })
+      const status = await ctx.reply("Transcribing...")
+      prompt = await transcribeAudio(buffer, "voice.ogg")
+      await ctx.api.editMessageText(ctx.chat.id, status.message_id, `<blockquote>${prompt}</blockquote>`, { parse_mode: "HTML" })
+    } catch (e) {
+      console.error("Voice transcription error:", e)
+      await ctx.reply(`Transcription failed: ${e instanceof Error ? e.message : "unknown error"}`)
+      return
+    }
 
     handlePrompt(ctx, prompt).catch((e) => console.error("handlePrompt error:", e))
   })
