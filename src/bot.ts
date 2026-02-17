@@ -318,7 +318,9 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       const res = await fetch(url)
       const buffer = Buffer.from(await res.arrayBuffer())
 
-      const status = await ctx.reply("Transcribing...")
+      const status = await ctx.reply("Transcribing...", {
+        reply_parameters: { message_id: ctx.message.message_id },
+      })
       prompt = await transcribeAudio(buffer, "voice.ogg")
       await ctx.api.editMessageText(ctx.chat.id, status.message_id, `<blockquote>${prompt}</blockquote>`, { parse_mode: "HTML" })
     } catch (e) {
