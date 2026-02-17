@@ -1,0 +1,15 @@
+[Unit]
+Description=Telegram Claude Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/telegram-claude
+EnvironmentFile=/path/to/telegram-claude/.env
+ExecStart=/path/to/bun run src/index.ts
+Restart=on-failure
+RestartSec=5
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target

@@ -52,35 +52,26 @@ bun install
 bun run src/index.ts
 ```
 
-### 5. Run as a Service (optional)
+For development, you can use `bun run dev` for auto-reload on changes, or run in a tmux session. However, tmux is not suitable for production — it won't auto-restart on crashes or survive reboots. Use a systemd service for persistent deployments.
+
+### 5. Run as a Service (recommended)
 
 To keep the bot running across reboots and auto-restart on crashes, set up a systemd user service.
 
-Create `~/.config/systemd/user/telegram-claude.service`:
-
-```ini
-[Unit]
-Description=Telegram Claude Bot
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/path/to/telegram-claude
-ExecStart=/path/to/bun run src/index.ts
-Restart=on-failure
-RestartSec=5
-EnvironmentFile=/path/to/telegram-claude/.env
-
-[Install]
-WantedBy=default.target
-```
-
-Then enable and start:
+A service file is included in the repo. Edit `telegram-claude.service` to set the correct paths for your system (`WorkingDirectory`, `ExecStart`, `EnvironmentFile`), then symlink and enable it:
 
 ```bash
+# edit paths in the service file
+vim telegram-claude.service
+
+# symlink to systemd user directory
+mkdir -p ~/.config/systemd/user
+ln -sf "$(pwd)/telegram-claude.service" ~/.config/systemd/user/telegram-claude.service
+
 # allow service to run without an active login session
 loginctl enable-linger $USER
 
+# enable and start
 systemctl --user daemon-reload
 systemctl --user enable telegram-claude
 systemctl --user start telegram-claude
@@ -92,6 +83,7 @@ Useful commands:
 systemctl --user status telegram-claude    # check status
 journalctl --user -u telegram-claude -f    # follow logs
 systemctl --user restart telegram-claude   # restart
+systemctl --user stop telegram-claude      # stop
 ```
 
 ## Commands
