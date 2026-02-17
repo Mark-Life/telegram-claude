@@ -357,7 +357,11 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
         reply_parameters: { message_id: ctx.message.message_id },
       })
       prompt = await transcribeAudio(buffer, "voice.ogg")
-      await ctx.api.editMessageText(ctx.chat.id, status.message_id, `<blockquote>${prompt}</blockquote>`, { parse_mode: "HTML" })
+      const maxDisplay = 3800
+      const displayText = prompt.length > maxDisplay
+        ? prompt.slice(0, maxDisplay) + "... (truncated)"
+        : prompt
+      await ctx.api.editMessageText(ctx.chat.id, status.message_id, `<blockquote>${escapeHtml(displayText)}</blockquote>`, { parse_mode: "HTML" })
     } catch (e) {
       console.error("Voice transcription error:", e)
       await ctx.reply(`Transcription failed: ${e instanceof Error ? e.message : "unknown error"}`)
