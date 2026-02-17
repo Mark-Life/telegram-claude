@@ -69,11 +69,16 @@ type StreamResult = {
 
 type MessageMode = "text" | "tools" | "thinking" | "none"
 
+type StreamOptions = {
+  replyMarkup?: import("grammy").Keyboard
+}
+
 /** Stream Claude events into separate Telegram messages by type */
 export async function streamToTelegram(
   ctx: Context,
   events: AsyncGenerator<ClaudeEvent>,
-  projectName: string
+  projectName: string,
+  options?: StreamOptions
 ): Promise<StreamResult> {
   const chatId = ctx.chat!.id
   const result: StreamResult = {}
@@ -86,9 +91,16 @@ export async function streamToTelegram(
   let toolLines: string[] = []
   let lastTextMessageId = 0
 
+  let firstMessageSent = false
+
   /** Send a new Telegram message and track its ID */
   const sendNew = async (text: string, parseMode?: "HTML") => {
-    const opts = parseMode ? { parse_mode: parseMode as const } : {}
+    const opts: Record<string, unknown> = {}
+    if (parseMode) opts.parse_mode = parseMode
+    if (!firstMessageSent && options?.replyMarkup) {
+      opts.reply_markup = options.replyMarkup
+      firstMessageSent = true
+    }
     const sent = await ctx.api.sendMessage(chatId, text, opts)
     messageId = sent.message_id
     lastEditTime = 0
@@ -126,7 +138,10 @@ export async function streamToTelegram(
   /** Update the tools message with current tool lines */
   const flushTools = async () => {
     if (toolLines.length === 0) return
-    const text = toolLines.map((l) => `<i>${escapeHtml(l)}</i>`).join("\n")
+    const lines = toolLines.map((l) => `<i>${escapeHtml(l)}</i>`).join("\n")
+    const text = toolLines.length >= 4
+      ? `<blockquote expandable>${lines}</blockquote>`
+      : lines
     await safeEditMessage(ctx, chatId, messageId, text, toolLines.join("\n"))
   }
 

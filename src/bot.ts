@@ -1,4 +1,4 @@
-import { Bot, InlineKeyboard, type Context } from "grammy"
+import { Bot, InlineKeyboard, Keyboard, type Context } from "grammy"
 import { readdirSync, statSync } from "fs"
 import { join, basename } from "path"
 import { runClaude, stopClaude, hasActiveProcess } from "./claude"
@@ -9,6 +9,7 @@ import { listSessions, listAllSessions, getSessionProject } from "./history"
 type UserState = {
   activeProject: string
   sessions: Map<string, string>
+  pinnedMessageId?: number
 }
 
 const userStates = new Map<number, UserState>()
@@ -16,6 +17,21 @@ const userStates = new Map<number, UserState>()
 /** Escape HTML special characters for Telegram */
 function escapeHtml(text: string) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+
+/** Keyboard shown when no prompt is running */
+function idleKeyboard() {
+  return new Keyboard()
+    .text("/projects").text("/history").row()
+    .text("/new").text("/help").row()
+    .resized().persistent()
+}
+
+/** Keyboard shown while a prompt is running */
+function runningKeyboard() {
+  return new Keyboard()
+    .text("/stop").row()
+    .resized().persistent()
 }
 
 /** Get or create user state */
@@ -61,13 +77,13 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
   bot.command("start", async (ctx) => {
     const state = getState(ctx.from!.id)
     const project = state.activeProject || "(none)"
-    await ctx.reply(`Claude Code bot ready.\nActive project: ${project}\n\nCommands:\n/projects - switch project\n/history - resume a past session\n/stop - kill active process\n/status - current state\n/new - reset session`)
+    await ctx.reply(`Claude Code bot ready.\nActive project: ${project}\n\nCommands:\n/projects - switch project\n/history - resume a past session\n/stop - kill active process\n/status - current state\n/new - reset session`, { reply_markup: idleKeyboard() })
   })
 
   bot.command("projects", async (ctx) => {
     const projects = listProjects(projectsDir)
     if (projects.length === 0) {
-      await ctx.reply(`No projects found in ${projectsDir}`)
+      await ctx.reply(`No projects found in ${projectsDir}`, { reply_markup: idleKeyboard() })
       return
     }
 
@@ -95,14 +111,23 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
 
     const state = getState(ctx.from!.id)
+    const chatId = ctx.chat!.id
     state.activeProject = fullPath
     await ctx.answerCallbackQuery({ text: `Switched to ${displayName}` })
-    await ctx.editMessageText(`Active project: ${displayName}`)
+    const msg = await ctx.editMessageText(`Active project: ${displayName}`)
+    if (state.pinnedMessageId) {
+      await ctx.api.unpinChatMessage(chatId, state.pinnedMessageId).catch(() => {})
+    }
+    const pinnedId = typeof msg === "object" && "message_id" in msg ? msg.message_id : undefined
+    if (pinnedId) {
+      await ctx.api.pinChatMessage(chatId, pinnedId, { disable_notification: true }).catch(() => {})
+      state.pinnedMessageId = pinnedId
+    }
   })
 
   bot.command("stop", async (ctx) => {
     const stopped = stopClaude(ctx.from!.id)
-    await ctx.reply(stopped ? "Process stopped." : "No active process.")
+    await ctx.reply(stopped ? "Process stopped." : "No active process.", { reply_markup: idleKeyboard() })
   })
 
   bot.command("status", async (ctx) => {
@@ -113,7 +138,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const running = hasActiveProcess(ctx.from!.id) ? "Yes" : "No"
     const sessionCount = state.sessions.size
 
-    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}`)
+    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}`, { reply_markup: idleKeyboard() })
   })
 
   bot.command("help", async (ctx) => {
@@ -129,7 +154,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
         "",
         "Send any text or voice message to chat with Claude in the active project.",
       ].join("\n"),
-      { parse_mode: "HTML" },
+      { parse_mode: "HTML", reply_markup: idleKeyboard() },
     )
   })
 
@@ -138,7 +163,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     if (state.activeProject) {
       state.sessions.delete(state.activeProject)
     }
-    await ctx.reply("Session cleared. Next message starts a fresh conversation.")
+    await ctx.reply("Session cleared. Next message starts a fresh conversation.", { reply_markup: idleKeyboard() })
   })
 
   bot.command("history", async (ctx) => {
@@ -149,7 +174,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       : listSessions(state.activeProject)
 
     if (sessions.length === 0) {
-      await ctx.reply(isGlobal ? "No session history found." : "No session history found for this project.")
+      await ctx.reply(isGlobal ? "No session history found." : "No session history found for this project.", { reply_markup: idleKeyboard() })
       return
     }
 
@@ -187,9 +212,18 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
 
     state.sessions.set(state.activeProject, sessionId)
+    const chatId = ctx.chat!.id
     const projectName = basename(state.activeProject)
     await ctx.answerCallbackQuery({ text: "Session resumed" })
-    await ctx.editMessageText(`Resumed session in <b>${escapeHtml(projectName)}</b>. Next message continues this conversation.`, { parse_mode: "HTML" })
+    const msg = await ctx.editMessageText(`Resumed session in <b>${escapeHtml(projectName)}</b>. Next message continues this conversation.`, { parse_mode: "HTML" })
+    if (state.pinnedMessageId) {
+      await ctx.api.unpinChatMessage(chatId, state.pinnedMessageId).catch(() => {})
+    }
+    const pinnedId = typeof msg === "object" && "message_id" in msg ? msg.message_id : undefined
+    if (pinnedId) {
+      await ctx.api.pinChatMessage(chatId, pinnedId, { disable_notification: true }).catch(() => {})
+      state.pinnedMessageId = pinnedId
+    }
   })
 
   /** Send a prompt to Claude and stream the response */
@@ -197,7 +231,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const state = getState(ctx.from!.id)
 
     if (!state.activeProject) {
-      await ctx.reply("No project selected. Use /projects to pick one.")
+      await ctx.reply("No project selected. Use /projects to pick one.", { reply_markup: idleKeyboard() })
       return
     }
 
@@ -205,7 +239,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
 
     const events = runClaude(ctx.from!.id, prompt, state.activeProject, sessionId)
-    const result = await streamToTelegram(ctx, events, projectName)
+    const result = await streamToTelegram(ctx, events, projectName, { replyMarkup: runningKeyboard() })
 
     if (result.sessionId) {
       state.sessions.set(state.activeProject, result.sessionId)
@@ -220,7 +254,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const state = getState(ctx.from!.id)
 
     if (!state.activeProject) {
-      await ctx.reply("No project selected. Use /projects to pick one.")
+      await ctx.reply("No project selected. Use /projects to pick one.", { reply_markup: idleKeyboard() })
       return
     }
 
