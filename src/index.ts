@@ -47,13 +47,22 @@ process.on("SIGINT", shutdown)
 bot.start({
   onStart: () => {
     console.log("Bot started")
-    bot.api.setMyCommands([
+    const commands = [
       { command: "projects", description: "Switch active project" },
       { command: "history", description: "Resume a past session" },
       { command: "new", description: "Start fresh conversation" },
       { command: "stop", description: "Kill active process" },
       { command: "status", description: "Show current state" },
       { command: "help", description: "Show available commands" },
-    ]).catch((e) => console.error("Failed to set bot commands:", e))
+    ]
+    const scopes = [
+      { type: "default" as const },
+      { type: "all_private_chats" as const },
+      { type: "all_group_chats" as const },
+      { type: "all_chat_administrators" as const },
+    ]
+    Promise.all(
+      scopes.map((scope) => bot.api.setMyCommands(commands, { scope })),
+    ).catch((e) => console.error("Failed to set bot commands:", e))
   },
 })
