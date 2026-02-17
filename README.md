@@ -58,7 +58,14 @@ For development, you can use `bun run dev` for auto-reload on changes, or run in
 
 To keep the bot running across reboots and auto-restart on crashes, set up a systemd user service.
 
-A service file is included in the repo. Edit `telegram-claude.service` to set the correct paths for your system (`WorkingDirectory`, `ExecStart`, `EnvironmentFile`), then symlink and enable it:
+A template service file is included in the repo. Edit `telegram-claude.service` to set the correct paths for your system:
+
+- `WorkingDirectory` — path to this repo
+- `EnvironmentFile` — path to your `.env` file
+- `ExecStart` — absolute path to `bun`
+- `Environment=PATH=...` — must include directories containing both `bun` and `claude` binaries
+
+Then symlink and enable it:
 
 ```bash
 # edit paths in the service file
