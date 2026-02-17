@@ -3,6 +3,7 @@ import type { ClaudeEvent } from "./claude"
 
 const MAX_MSG_LENGTH = 4000
 const EDIT_INTERVAL_MS = 1500
+const TYPING_INTERVAL_MS = 5000
 
 /** Escape HTML special characters */
 function escapeHtml(text: string) {
@@ -147,6 +148,11 @@ export async function streamToTelegram(
     if (pendingEdit && mode === "text") await flushText().catch(() => {})
   }, EDIT_INTERVAL_MS)
 
+  const typingTimer = setInterval(() => {
+    ctx.api.sendChatAction(chatId, "typing").catch(() => {})
+  }, TYPING_INTERVAL_MS)
+  ctx.api.sendChatAction(chatId, "typing").catch(() => {})
+
   try {
     for await (const event of events) {
       if (event.kind === "text_delta") {
@@ -195,6 +201,7 @@ export async function streamToTelegram(
     }
   } finally {
     clearInterval(editTimer)
+    clearInterval(typingTimer)
   }
 
   // Final edit on the last text message with footer
