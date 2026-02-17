@@ -193,7 +193,19 @@ export async function* runClaude(
     signal: ac.signal,
   })
 
-  const timeout = setTimeout(() => ac.abort(), DEFAULT_TIMEOUT_MS)
+  let timedOut = false
+  const timeout = setTimeout(() => { timedOut = true; ac.abort() }, DEFAULT_TIMEOUT_MS)
+
+  let stderrBuffer = ""
+  const stderrDrain = (async () => {
+    const reader = proc.stderr.getReader()
+    const decoder = new TextDecoder()
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      stderrBuffer += decoder.decode(value, { stream: true })
+    }
+  })()
 
   try {
     const reader = proc.stdout.getReader()
@@ -215,19 +227,18 @@ export async function* runClaude(
 
     const exitCode = await proc.exited
     if (exitCode !== 0) {
-      const stderr = await new Response(proc.stderr).text()
-      yield { kind: "error", message: stderr || `Process exited with code ${exitCode}` }
+      await stderrDrain
+      yield { kind: "error", message: stderrBuffer.trim() || `Process exited with code ${exitCode}` }
     }
   } catch (err) {
-    if (ac.signal.aborted) {
-      yield { kind: "error", message: "Process was stopped." }
-    } else {
-      yield { kind: "error", message: String(err) }
-    }
+    const reason = timedOut ? "Process timed out." : "Process was stopped."
+    const detail = stderrBuffer.trim()
+    yield { kind: "error", message: detail ? `${reason}\n${detail}` : reason }
   } finally {
     clearTimeout(timeout)
     proc.kill()
     await proc.exited
+    await stderrDrain.catch(() => {})
     userProcesses.delete(telegramUserId)
     resolveCleanup()
   }
