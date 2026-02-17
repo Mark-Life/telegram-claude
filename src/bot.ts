@@ -5,7 +5,7 @@ import { join, basename } from "path"
 import { runClaude, stopClaude, hasActiveProcess } from "./claude"
 import { streamToTelegram } from "./telegram"
 import { transcribeAudio } from "./transcribe"
-import { listSessions, listAllSessions, getSessionProject } from "./history"
+import { listAllSessions, getSessionProject } from "./history"
 
 type UserState = {
   activeProject: string
@@ -214,11 +214,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
   })
 
   /** Build paginated history message with inline keyboard */
-  function buildHistoryMessage(state: UserState, page: number) {
-    const isGlobal = !state.activeProject
-    const sessions = isGlobal
-      ? listAllSessions()
-      : listSessions(state.activeProject)
+  function buildHistoryMessage(page: number) {
+    const sessions = listAllSessions()
 
     if (sessions.length === 0) return null
 
@@ -229,9 +226,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const keyboard = new InlineKeyboard()
     for (const s of pageSlice) {
       const date = new Date(s.lastActiveAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
-      const prefix = isGlobal ? `[${s.projectName}] ` : ""
-      const maxSummary = isGlobal ? 30 : 40
-      const label = `${date} — ${prefix}${s.summary.slice(0, maxSummary)}`
+      const label = `${date} — [${s.projectName}] ${s.summary.slice(0, 30)}`
       keyboard.text(label, `session:${s.sessionId}`).row()
     }
 
@@ -244,20 +239,14 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
 
     const pageIndicator = totalPages > 1 ? ` (${safePage + 1}/${totalPages})` : ""
-    const title = isGlobal
-      ? `Recent sessions (all projects)${pageIndicator}:`
-      : `Sessions for <b>${escapeHtml(state.activeProject === projectsDir ? "general" : basename(state.activeProject))}</b>${pageIndicator}:`
-
-    return { text: title, keyboard }
+    return { text: `All sessions${pageIndicator}:`, keyboard }
   }
 
   bot.command("history", async (ctx) => {
-    const state = getState(ctx.from!.id)
-    const result = buildHistoryMessage(state, 0)
+    const result = buildHistoryMessage(0)
 
     if (!result) {
-      const isGlobal = !state.activeProject
-      await ctx.reply(isGlobal ? "No session history found." : "No session history found for this project.", { reply_markup: mainKeyboard })
+      await ctx.reply("No session history found.", { reply_markup: mainKeyboard })
       return
     }
 
@@ -269,8 +258,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
   bot.callbackQuery(/^history:(\d+)$/, async (ctx) => {
     const page = parseInt(ctx.match![1], 10)
-    const state = getState(ctx.from!.id)
-    const result = buildHistoryMessage(state, page)
+    const result = buildHistoryMessage(page)
 
     if (!result) {
       await ctx.answerCallbackQuery({ text: "No sessions found" })
@@ -289,7 +277,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const state = getState(ctx.from!.id)
 
     const cachedProject = getSessionProject(sessionId)
-    if (!state.activeProject && cachedProject) {
+    if (cachedProject) {
       state.activeProject = cachedProject
     }
 
