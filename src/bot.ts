@@ -34,6 +34,14 @@ function runningKeyboard() {
     .resized().persistent()
 }
 
+/** Extract reply-to-message text and prepend it as context */
+function buildPromptWithReplyContext(ctx: Context, userText: string) {
+  const replyText = ctx.message?.reply_to_message?.text
+  if (!replyText) return userText
+  const truncated = replyText.length > 2000 ? replyText.slice(0, 2000) + "..." : replyText
+  return `[Replying to: ${truncated}]\n\n${userText}`
+}
+
 /** Get or create user state */
 function getState(userId: number): UserState {
   let state = userStates.get(userId)
@@ -247,7 +255,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
   }
 
   bot.on("message:text", (ctx) => {
-    handlePrompt(ctx, ctx.message.text).catch((e) => console.error("handlePrompt error:", e))
+    const prompt = buildPromptWithReplyContext(ctx, ctx.message.text)
+    handlePrompt(ctx, prompt).catch((e) => console.error("handlePrompt error:", e))
   })
 
   bot.on("message:voice", async (ctx) => {
@@ -274,7 +283,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       return
     }
 
-    handlePrompt(ctx, prompt).catch((e) => console.error("handlePrompt error:", e))
+    const fullPrompt = buildPromptWithReplyContext(ctx, prompt)
+    handlePrompt(ctx, fullPrompt).catch((e) => console.error("handlePrompt error:", e))
   })
 
   return bot
