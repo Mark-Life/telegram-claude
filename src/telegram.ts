@@ -1,4 +1,5 @@
 import type { Context } from "grammy"
+import { Marked } from "marked"
 import type { ClaudeEvent } from "./claude"
 
 const MAX_MSG_LENGTH = 4000
@@ -10,52 +11,111 @@ function escapeHtml(text: string) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 }
 
-/** Convert standard Markdown to Telegram-compatible HTML */
+/** Marked instance with Telegram-compatible HTML renderer */
+const marked = new Marked({
+  gfm: true,
+  breaks: false,
+  renderer: {
+    code({ text, lang }) {
+      const escaped = escapeHtml(text)
+      return lang
+        ? `\n<pre><code class="language-${lang}">${escaped}</code></pre>\n`
+        : `\n<pre>${escaped}</pre>\n`
+    },
+    blockquote({ tokens }) {
+      return `<blockquote>${this.parser.parse(tokens).trim()}</blockquote>\n`
+    },
+    heading({ tokens }) {
+      return `<b>${this.parser.parseInline(tokens)}</b>\n`
+    },
+    hr() {
+      return "\n"
+    },
+    list({ items, ordered }) {
+      return items.map((item, i) => {
+        const bullet = ordered ? `${i + 1}. ` : "- "
+        const content = this.parser.parse(item.tokens).trim()
+        return `${bullet}${content}`
+      }).join("\n") + "\n"
+    },
+    listitem(item) {
+      return this.parser.parse(item.tokens).trim()
+    },
+    paragraph({ tokens }) {
+      return `${this.parser.parseInline(tokens)}\n`
+    },
+    table({ header, rows }) {
+      const headerText = header.map((cell) => this.parser.parseInline(cell.tokens)).join(" | ")
+      const rowTexts = rows.map((row) =>
+        row.map((cell) => this.parser.parseInline(cell.tokens)).join(" | "),
+      )
+      return `<pre>${escapeHtml(headerText)}\n${escapeHtml(rowTexts.join("\n"))}</pre>\n`
+    },
+    tablerow({ text }) {
+      return text
+    },
+    tablecell(token) {
+      return this.parser.parseInline(token.tokens)
+    },
+    strong({ tokens }) {
+      return `<b>${this.parser.parseInline(tokens)}</b>`
+    },
+    em({ tokens }) {
+      return `<i>${this.parser.parseInline(tokens)}</i>`
+    },
+    codespan({ text }) {
+      return `<code>${escapeHtml(text)}</code>`
+    },
+    br() {
+      return "\n"
+    },
+    del({ tokens }) {
+      return `<s>${this.parser.parseInline(tokens)}</s>`
+    },
+    link({ href, tokens }) {
+      return `<a href="${escapeHtml(href)}">${this.parser.parseInline(tokens)}</a>`
+    },
+    image({ text }) {
+      return text
+    },
+    space() {
+      return ""
+    },
+    html({ text }) {
+      return escapeHtml(text)
+    },
+    def() {
+      return ""
+    },
+    checkbox({ checked }) {
+      return checked ? "[x] " : "[ ] "
+    },
+    text({ tokens, text }) {
+      if (tokens) return this.parser.parseInline(tokens)
+      return escapeHtml(text)
+    },
+  },
+})
+
+/** Convert Markdown to Telegram-compatible HTML using a proper parser */
 function markdownToTelegramHtml(md: string) {
-  const codeBlocks: string[] = []
-
-  let text = md.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    const escaped = escapeHtml(code.replace(/\n$/, ""))
-    const html = lang
-      ? `<pre><code class="language-${lang}">${escaped}</code></pre>`
-      : `<pre>${escaped}</pre>`
-    codeBlocks.push(html)
-    return `\x00CB${codeBlocks.length - 1}\x00`
-  })
-
-  const inlineCodes: string[] = []
-  text = text.replace(/`([^`]+)`/g, (_, code) => {
-    inlineCodes.push(`<code>${escapeHtml(code)}</code>`)
-    return `\x00IC${inlineCodes.length - 1}\x00`
-  })
-
-  text = escapeHtml(text)
-
-  text = text.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
-  text = text.replace(/\*(.+?)\*/g, "<i>$1</i>")
-  text = text.replace(/(?<!\w)_(.+?)_(?!\w)/g, "<i>$1</i>")
-  text = text.replace(/~~(.+?)~~/g, "<s>$1</s>")
-  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
-  text = text.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>")
-  text = text.replace(/^&gt;\s?(.+)$/gm, "<blockquote>$1</blockquote>")
-  text = text.replace(/<\/blockquote>\n<blockquote>/g, "\n")
-
-  text = text.replace(/\x00IC(\d+)\x00/g, (_, idx) => inlineCodes[parseInt(idx)])
-  text = text.replace(/\x00CB(\d+)\x00/g, (_, idx) => codeBlocks[parseInt(idx)])
-
-  return text
+  return (marked.parse(md) as string).trim()
 }
 
-/** Try editing with HTML, fall back to plain text */
+/** Try editing with HTML, fall back to plain text. Returns true if HTML succeeded. */
 async function safeEditMessage(ctx: Context, chatId: number, messageId: number, text: string, rawText?: string) {
   const displayText = text || "..."
   try {
     await ctx.api.editMessageText(chatId, messageId, displayText, { parse_mode: "HTML" })
-  } catch {
+    return true
+  } catch (err: any) {
+    if (err?.description?.includes("message is not modified") || err?.description?.includes("message can't be edited")) return true
     try {
       await ctx.api.editMessageText(chatId, messageId, rawText ?? displayText)
-    } catch (err: any) {
-      if (!err?.description?.includes("message is not modified") && !err?.description?.includes("message can't be edited")) throw err
+      return false
+    } catch (err2: any) {
+      if (!err2?.description?.includes("message is not modified") && !err2?.description?.includes("message can't be edited")) throw err2
+      return false
     }
   }
 }
@@ -217,9 +277,11 @@ export async function streamToTelegram(
     const html = markdownToTelegramHtml(accumulated)
     const footer = formatFooter(projectName, result)
     const display = footer ? `${html}\n\n${footer}` : html
-    const rawFooter = formatFooterPlain(projectName, result)
-    const rawDisplay = rawFooter ? `${accumulated}\n\n${rawFooter}` : accumulated
-    await safeEditMessage(ctx, chatId, lastTextMessageId, display || "...", rawDisplay || "...").catch(() => {})
+    const ok = await safeEditMessage(ctx, chatId, lastTextMessageId, display || "...").catch(() => false)
+    if (!ok && footer) {
+      // HTML with footer failed — keep existing styled message, send footer separately
+      await ctx.api.sendMessage(chatId, footer, { parse_mode: "HTML" }).catch(() => {})
+    }
   } else if (!lastTextMessageId && (result.cost !== undefined || result.durationMs !== undefined)) {
     // No text message was sent -- send footer as standalone
     const footer = formatFooter(projectName, result)
