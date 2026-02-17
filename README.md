@@ -98,6 +98,7 @@ systemctl --user stop telegram-claude      # stop
 | Command | Description |
 |-----------|--------------------------------------|
 | `/projects` | Select active project directory |
+| `/history` | Browse and resume past Claude sessions |
 | `/stop` | Kill running Claude process |
 | `/status` | Show active project & process state |
 | `/new` | Clear session, start fresh conversation |
