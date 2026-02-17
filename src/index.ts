@@ -53,6 +53,7 @@ bot.start({
       { command: "new", description: "Start fresh conversation" },
       { command: "stop", description: "Kill active process" },
       { command: "status", description: "Show current state" },
+      { command: "help", description: "Show available commands" },
     ]).catch((e) => console.error("Failed to set bot commands:", e))
   },
 })

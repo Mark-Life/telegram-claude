@@ -116,6 +116,23 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}`)
   })
 
+  bot.command("help", async (ctx) => {
+    await ctx.reply(
+      [
+        "<b>Commands:</b>",
+        "/projects — switch active project",
+        "/history — resume a past session",
+        "/new — start fresh conversation",
+        "/stop — kill active process",
+        "/status — show current state",
+        "/help — show this message",
+        "",
+        "Send any text or voice message to chat with Claude in the active project.",
+      ].join("\n"),
+      { parse_mode: "HTML" },
+    )
+  })
+
   bot.command("new", async (ctx) => {
     const state = getState(ctx.from!.id)
     if (state.activeProject) {

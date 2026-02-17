@@ -102,6 +102,7 @@ systemctl --user stop telegram-claude      # stop
 | `/stop` | Kill running Claude process |
 | `/status` | Show active project & process state |
 | `/new` | Clear session, start fresh conversation |
+| `/help` | Show available commands |
 
 Text messages are forwarded to Claude Code as prompts. Voice messages are transcribed and forwarded the same way.
 
