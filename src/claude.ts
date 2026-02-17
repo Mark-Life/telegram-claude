@@ -41,7 +41,8 @@ export type ClaudeEvent =
   | { kind: "result"; text: string; sessionId: string; cost: number; durationMs: number; turns: number }
   | { kind: "error"; message: string }
 
-const userProcesses = new Map<number, AbortController>()
+type ProcessEntry = { ac: AbortController; done: Promise<void> }
+const userProcesses = new Map<number, ProcessEntry>()
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 
 /** Format tool input into a short description */
@@ -161,9 +162,13 @@ export async function* runClaude(
   projectDir: string,
   sessionId?: string
 ): AsyncGenerator<ClaudeEvent> {
-  if (userProcesses.has(telegramUserId)) {
-    yield { kind: "error", message: "A Claude process is already running. Use /stop first." }
-    return
+  const existing = userProcesses.get(telegramUserId)
+  if (existing) {
+    if (!existing.ac.signal.aborted) {
+      yield { kind: "error", message: "A Claude process is already running. Use /stop first." }
+      return
+    }
+    await existing.done
   }
 
   const args = [
@@ -175,7 +180,9 @@ export async function* runClaude(
   if (sessionId) args.push("-r", sessionId)
 
   const ac = new AbortController()
-  userProcesses.set(telegramUserId, ac)
+  let resolveCleanup!: () => void
+  const done = new Promise<void>((r) => { resolveCleanup = r })
+  userProcesses.set(telegramUserId, { ac, done })
 
   const proc = spawn({
     cmd: args,
@@ -219,21 +226,28 @@ export async function* runClaude(
     }
   } finally {
     clearTimeout(timeout)
-    userProcesses.delete(telegramUserId)
     proc.kill()
+    await proc.exited
+    userProcesses.delete(telegramUserId)
+    resolveCleanup()
   }
 }
 
 /** Stop the active Claude process for a user */
 export function stopClaude(telegramUserId: number) {
-  const ac = userProcesses.get(telegramUserId)
-  if (!ac) return false
-  ac.abort()
-  userProcesses.delete(telegramUserId)
+  const entry = userProcesses.get(telegramUserId)
+  if (!entry || entry.ac.signal.aborted) return false
+  entry.ac.abort()
   return true
 }
 
 /** Check if a user has an active process */
 export function hasActiveProcess(telegramUserId: number) {
-  return userProcesses.has(telegramUserId)
+  const entry = userProcesses.get(telegramUserId)
+  return !!entry && !entry.ac.signal.aborted
+}
+
+/** Abort all active Claude processes (used during shutdown) */
+export function stopAll() {
+  for (const entry of userProcesses.values()) entry.ac.abort()
 }
