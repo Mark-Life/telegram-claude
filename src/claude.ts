@@ -184,12 +184,14 @@ export async function* runClaude(
   const done = new Promise<void>((r) => { resolveCleanup = r })
   userProcesses.set(telegramUserId, { ac, done })
 
+  const env = { ...process.env }
+  delete env.CLAUDECODE
   const proc = spawn({
     cmd: args,
     cwd: projectDir,
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, CLAUDECODE: undefined },
+    env,
     signal: ac.signal,
   })
 

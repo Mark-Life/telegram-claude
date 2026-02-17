@@ -75,9 +75,12 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
   const bot = new Bot(token)
 
   // Access control middleware
+  const botId = parseInt(token.split(":")[0], 10)
   bot.use(async (ctx, next) => {
-    if (ctx.from?.id !== allowedUserId) {
-      await ctx.reply("Unauthorized.")
+    if (!ctx.from || ctx.from.id === botId) return
+    if (ctx.from.id !== allowedUserId) {
+      console.log(`Auth rejected: from=${ctx.from.id} allowed=${allowedUserId}`)
+      await ctx.reply("Telegram User is Unauthorized.")
       return
     }
     await next()
@@ -288,7 +291,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
 
     const events = runClaude(ctx.from!.id, prompt, state.activeProject, sessionId)
-    const result = await streamToTelegram(ctx, events, projectName, { replyMarkup: runningKeyboard() })
+    const result = await streamToTelegram(ctx, events, projectName)
 
     if (result.sessionId) {
       state.sessions.set(state.activeProject, result.sessionId)
