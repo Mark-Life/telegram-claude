@@ -55,7 +55,7 @@ async function safeEditMessage(ctx: Context, chatId: number, messageId: number, 
     try {
       await ctx.api.editMessageText(chatId, messageId, rawText ?? displayText)
     } catch (err: any) {
-      if (!err?.description?.includes("message is not modified")) throw err
+      if (!err?.description?.includes("message is not modified") && !err?.description?.includes("message can't be edited")) throw err
     }
   }
 }
@@ -69,16 +69,11 @@ type StreamResult = {
 
 type MessageMode = "text" | "tools" | "thinking" | "none"
 
-type StreamOptions = {
-  replyMarkup?: import("grammy").Keyboard
-}
-
 /** Stream Claude events into separate Telegram messages by type */
 export async function streamToTelegram(
   ctx: Context,
   events: AsyncGenerator<ClaudeEvent>,
   projectName: string,
-  options?: StreamOptions
 ): Promise<StreamResult> {
   const chatId = ctx.chat!.id
   const result: StreamResult = {}
@@ -91,16 +86,10 @@ export async function streamToTelegram(
   let toolLines: string[] = []
   let lastTextMessageId = 0
 
-  let firstMessageSent = false
-
   /** Send a new Telegram message and track its ID */
   const sendNew = async (text: string, parseMode?: "HTML") => {
     const opts: Record<string, unknown> = {}
     if (parseMode) opts.parse_mode = parseMode
-    if (!firstMessageSent && options?.replyMarkup) {
-      opts.reply_markup = options.replyMarkup
-      firstMessageSent = true
-    }
     const sent = await ctx.api.sendMessage(chatId, text, opts)
     messageId = sent.message_id
     lastEditTime = 0
