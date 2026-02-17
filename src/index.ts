@@ -45,5 +45,14 @@ process.on("SIGTERM", shutdown)
 process.on("SIGINT", shutdown)
 
 bot.start({
-  onStart: () => console.log("Bot started"),
+  onStart: () => {
+    console.log("Bot started")
+    bot.api.setMyCommands([
+      { command: "projects", description: "Switch active project" },
+      { command: "history", description: "Resume a past session" },
+      { command: "new", description: "Start fresh conversation" },
+      { command: "stop", description: "Kill active process" },
+      { command: "status", description: "Show current state" },
+    ]).catch((e) => console.error("Failed to set bot commands:", e))
+  },
 })
