@@ -1,5 +1,6 @@
 import { Bot, InlineKeyboard, Keyboard, type Context } from "grammy"
 import { readdirSync, statSync } from "fs"
+import { execSync } from "child_process"
 import { join, basename } from "path"
 import { runClaude, stopClaude, hasActiveProcess } from "./claude"
 import { streamToTelegram } from "./telegram"
@@ -70,6 +71,28 @@ function listProjects(projectsDir: string) {
   }
 }
 
+/** Get GitHub HTTPS URL for a project directory, or null if unavailable */
+function getGitHubUrl(projectPath: string) {
+  try {
+    const raw = execSync("git remote get-url origin", { cwd: projectPath, timeout: 3000 })
+      .toString()
+      .trim()
+    // SSH: git@github.com:user/repo.git -> https://github.com/user/repo
+    const sshMatch = raw.match(/^git@([^:]+):(.+?)(?:\.git)?$/)
+    if (sshMatch) return `https://${sshMatch[1]}/${sshMatch[2]}`
+    // HTTPS: strip trailing .git
+    try {
+      const url = new URL(raw)
+      url.pathname = url.pathname.replace(/\.git$/, "")
+      return url.toString()
+    } catch {
+      return null
+    }
+  } catch {
+    return null
+  }
+}
+
 /** Create and configure the bot */
 export function createBot(token: string, allowedUserId: number, projectsDir: string) {
   const bot = new Bot(token)
@@ -126,7 +149,11 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const chatId = ctx.chat!.id
     state.activeProject = fullPath
     await ctx.answerCallbackQuery({ text: `Switched to ${displayName}` })
-    const msg = await ctx.editMessageText(`Active project: ${displayName}`)
+    const ghUrl = isGeneral ? null : getGitHubUrl(fullPath)
+    const projectLabel = ghUrl
+      ? `<a href="${escapeHtml(ghUrl)}">${escapeHtml(displayName)}</a>`
+      : escapeHtml(displayName)
+    const msg = await ctx.editMessageText(`Active project: ${projectLabel}`, { parse_mode: "HTML" })
     if (state.pinnedMessageId) {
       await ctx.api.unpinChatMessage(chatId, state.pinnedMessageId).catch(() => {})
     }
