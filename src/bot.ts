@@ -23,9 +23,8 @@ function escapeHtml(text: string) {
 
 /** Persistent reply keyboard with all commands */
 const mainKeyboard = new Keyboard()
-  .text("/projects").text("/history").row()
-  .text("/stop").text("/new").row()
-  .text("/status").text("/help").row()
+  .text("Projects").text("History").row()
+  .text("Stop").text("New").row()
   .resized().persistent()
 
 /** Extract reply-to-message text and prepend it as context */
@@ -99,6 +98,22 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       return
     }
     await next()
+  })
+
+  const buttonToCommand: Record<string, string> = {
+    Projects: "/projects",
+    History: "/history",
+    Stop: "/stop",
+    New: "/new",
+  }
+  bot.use((ctx, next) => {
+    const text = ctx.message?.text
+    if (text && text in buttonToCommand) {
+      const cmd = buttonToCommand[text]
+      ctx.message!.text = cmd
+      ctx.message!.entities = [{ type: "bot_command", offset: 0, length: cmd.length }]
+    }
+    return next()
   })
 
   bot.command("start", async (ctx) => {
