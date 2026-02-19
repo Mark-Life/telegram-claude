@@ -375,7 +375,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
     const dir = join(state.activeProject, "user-sent-files")
     mkdirSync(dir, { recursive: true })
-    const dest = join(dir, filename)
+    const dest = join(dir, basename(filename))
     writeFileSync(dest, buffer)
     return dest
   }

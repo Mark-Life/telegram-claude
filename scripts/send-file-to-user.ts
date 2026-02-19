@@ -2,7 +2,6 @@
 
 const BLOCKED_PATTERNS = [
   /^\.env/,
-  /^\.env\..+/,
   /^credentials/i,
   /^secrets/i,
   /\.pem$/,
