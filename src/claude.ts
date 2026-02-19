@@ -155,7 +155,7 @@ function createStreamParser() {
   }
 }
 
-const SCRIPT_DIR = new URL("../../scripts", import.meta.url).pathname
+const SCRIPT_DIR = new URL("../scripts", import.meta.url).pathname
 
 /** Build system prompt snippet telling Claude how to send files to the user */
 function buildFileSystemPrompt() {
