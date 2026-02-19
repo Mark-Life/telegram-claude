@@ -176,12 +176,20 @@ export async function streamToTelegram(
       const chunk = text.slice(0, splitAt)
       accumulated = text.slice(splitAt)
 
-      await safeEditMessage(ctx, chatId, messageId, markdownToTelegramHtml(chunk), chunk)
+      if (messageId === 0) {
+        await sendNew(markdownToTelegramHtml(chunk), "HTML")
+      } else {
+        await safeEditMessage(ctx, chatId, messageId, markdownToTelegramHtml(chunk), chunk)
+      }
       await sendNew("...")
       text = accumulated
     }
 
-    await safeEditMessage(ctx, chatId, messageId, markdownToTelegramHtml(text), text)
+    if (messageId === 0) {
+      await sendNew(markdownToTelegramHtml(text), "HTML")
+    } else {
+      await safeEditMessage(ctx, chatId, messageId, markdownToTelegramHtml(text), text)
+    }
   }
 
   /** Update the tools message with current tool lines */
@@ -191,7 +199,11 @@ export async function streamToTelegram(
     const text = toolLines.length >= 4
       ? `<blockquote expandable>${lines}</blockquote>`
       : lines
-    await safeEditMessage(ctx, chatId, messageId, text, toolLines.join("\n"))
+    if (messageId === 0) {
+      await sendNew(text, "HTML")
+    } else {
+      await safeEditMessage(ctx, chatId, messageId, text, toolLines.join("\n"))
+    }
   }
 
   /** Switch to a new mode, finalizing the previous one */
@@ -204,6 +216,7 @@ export async function streamToTelegram(
       await flushTools()
     }
     mode = newMode
+    messageId = 0
     accumulated = ""
     toolLines = []
   }
@@ -220,17 +233,11 @@ export async function streamToTelegram(
   try {
     for await (const event of events) {
       if (event.kind === "text_delta") {
-        if (mode !== "text") {
-          await switchMode("text")
-          await sendNew("...")
-        }
+        if (mode !== "text") await switchMode("text")
         accumulated += event.text
         await flushText().catch(() => {})
       } else if (event.kind === "tool_use") {
-        if (mode !== "tools") {
-          await switchMode("tools")
-          await sendNew("...")
-        }
+        if (mode !== "tools") await switchMode("tools")
         const label = event.input ? `${event.name}: ${event.input}` : event.name
         toolLines.push(label)
         await flushTools().catch(() => {})
@@ -249,17 +256,11 @@ export async function streamToTelegram(
         result.durationMs = event.durationMs
         result.turns = event.turns
         if (!accumulated && event.text) {
-          if (mode !== "text") {
-            await switchMode("text")
-            await sendNew("...")
-          }
+          if (mode !== "text") await switchMode("text")
           accumulated = event.text
         }
       } else if (event.kind === "error") {
-        if (mode !== "text") {
-          await switchMode("text")
-          await sendNew("...")
-        }
+        if (mode !== "text") await switchMode("text")
         accumulated += `\n\n[Error: ${event.message}]`
       }
     }
@@ -270,6 +271,7 @@ export async function streamToTelegram(
 
   // Final edit on the last text message with footer
   if (mode === "text" && accumulated) {
+    if (messageId === 0) await flushText(true)
     lastTextMessageId = messageId
   }
 
