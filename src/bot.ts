@@ -1,5 +1,5 @@
 import { Bot, InlineKeyboard, Keyboard, type Context } from "grammy"
-import { readdirSync, statSync } from "fs"
+import { readdirSync, statSync, mkdirSync, writeFileSync } from "fs"
 import { execSync } from "child_process"
 import { join, basename } from "path"
 import { runClaude, stopClaude, hasActiveProcess } from "./claude"
@@ -313,7 +313,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const sessionId = state.sessions.get(state.activeProject)
     const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
 
-    const events = runClaude(ctx.from!.id, prompt, state.activeProject, sessionId)
+    const events = runClaude(ctx.from!.id, prompt, state.activeProject, ctx.chat!.id, sessionId)
     const result = await streamToTelegram(ctx, events, projectName)
 
     if (result.sessionId) {
@@ -358,6 +358,67 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
     const fullPrompt = buildPromptWithReplyContext(ctx, prompt)
     handlePrompt(ctx, fullPrompt).catch((e) => console.error("handlePrompt error:", e))
+  })
+
+  /** Download a Telegram file and save to project's user-sent-files dir */
+  async function saveUploadedFile(ctx: Context, filename: string) {
+    const state = getState(ctx.from!.id)
+    if (!state.activeProject) {
+      await ctx.reply("No project selected. Use /projects to pick one.", { reply_markup: mainKeyboard })
+      return null
+    }
+
+    const file = await ctx.getFile()
+    const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`
+    const res = await fetch(url)
+    const buffer = Buffer.from(await res.arrayBuffer())
+
+    const dir = join(state.activeProject, "user-sent-files")
+    mkdirSync(dir, { recursive: true })
+    const dest = join(dir, filename)
+    writeFileSync(dest, buffer)
+    return dest
+  }
+
+  bot.on("message:document", async (ctx) => {
+    const doc = ctx.message.document
+    const filename = doc.file_name ?? `file_${Date.now()}`
+
+    try {
+      const dest = await saveUploadedFile(ctx, filename)
+      if (!dest) return
+
+      const caption = ctx.message.caption ?? "See the attached file."
+      const prompt = `${caption}\n\n[File: ${filename} saved at ${dest}]`
+      const fullPrompt = buildPromptWithReplyContext(ctx, prompt)
+      handlePrompt(ctx, fullPrompt).catch((e) => console.error("handlePrompt error:", e))
+    } catch (e) {
+      console.error("Document upload error:", e)
+      await ctx.reply(`File upload failed: ${e instanceof Error ? e.message : "unknown error"}`)
+    }
+  })
+
+  bot.on("message:photo", async (ctx) => {
+    const photos = ctx.message.photo
+    const largest = photos[photos.length - 1]
+    const filename = `photo_${Date.now()}.jpg`
+
+    try {
+      // Override ctx.getFile to use the largest photo's file_id
+      const origGetFile = ctx.getFile.bind(ctx)
+      ctx.getFile = () => ctx.api.getFile(largest.file_id) as ReturnType<typeof origGetFile>
+
+      const dest = await saveUploadedFile(ctx, filename)
+      if (!dest) return
+
+      const caption = ctx.message.caption ?? "See the attached photo."
+      const prompt = `${caption}\n\n[Photo saved at ${dest}]`
+      const fullPrompt = buildPromptWithReplyContext(ctx, prompt)
+      handlePrompt(ctx, fullPrompt).catch((e) => console.error("handlePrompt error:", e))
+    } catch (e) {
+      console.error("Photo upload error:", e)
+      await ctx.reply(`Photo upload failed: ${e instanceof Error ? e.message : "unknown error"}`)
+    }
   })
 
   return bot
