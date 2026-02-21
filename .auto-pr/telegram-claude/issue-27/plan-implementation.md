@@ -5,7 +5,7 @@
   - Changes: Remove `pinnedMessageId?: number` (L13) from the `UserState` type definition at L10-14
   - Acceptance: `UserState` type has only `activeProject` and `sessions` fields. TypeScript compiles without errors.
 
-- [ ] **Task 2: Replace targeted unpin with `unpinAllChatMessages` in project switch callback**
+- [x] **Task 2: Replace targeted unpin with `unpinAllChatMessages` in project switch callback**
   - Files: `src/bot.ts`
   - Changes: In the `bot.callbackQuery(/^project:(.+)$/, ...)` handler (L140-172):
     - Replace L164-166 (`if (state.pinnedMessageId) { await ctx.api.unpinChatMessage(...) }`) with `await ctx.api.unpinAllChatMessages(chatId).catch(() => {})`
