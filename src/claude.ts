@@ -123,7 +123,6 @@ function createStreamParser() {
           yield { kind: "text_delta", text: delta.text }
         } else if (delta.type === "input_json_delta" && currentBlockType === "tool_use") {
           toolInputJson += delta.partial_json
-        }
         } else if (delta.type === "thinking_delta" && currentBlockType === "thinking") {
           if (delta.thinking) yield { kind: "thinking_delta", text: delta.thinking }
         }

@@ -293,7 +293,7 @@ export async function streamToTelegram(
           await safeEditMessage(ctx, chatId, messageId, `<i>Thought for ${secs}s</i>`).catch(() => {})
         }
         thinkingText = ""
-        mode = "none"
+        mode = "none" as MessageMode
       } else if (event.kind === "result") {
         result.sessionId = event.sessionId
         result.cost = event.cost
