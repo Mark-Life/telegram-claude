@@ -16,7 +16,7 @@
     ```
   - Acceptance: When Claude thinks, the generator yields `thinking_delta` events with the thinking text. `signature_delta` is still ignored.
 
-- [ ] **Task 3: Add thinking state variables and `flushThinking` function in `telegram.ts`**
+- [x] **Task 3: Add thinking state variables and `flushThinking` function in `telegram.ts`**
   - Files: `src/telegram.ts`
   - Changes:
     1. Add `let thinkingText = ""` alongside the existing state variables (after `let toolLines: string[] = []` on line 146)
@@ -30,14 +30,14 @@
        - Calls `safeEditMessage` with the formatted HTML and raw text fallback
   - Acceptance: `flushThinking` exists and handles throttling, truncation, and formatting.
 
-- [ ] **Task 4: Update `switchMode` to reset and finalize thinking state**
+- [x] **Task 4: Update `switchMode` to reset and finalize thinking state**
   - Files: `src/telegram.ts`
   - Changes: In the `switchMode` function (line 198-209):
     1. Add a block: `if (mode === "thinking" && thinkingText) { await flushThinking(true) }` — alongside the existing `mode === "text"` and `mode === "tools"` blocks
     2. Add `thinkingText = ""` in the reset section (alongside `accumulated = ""` and `toolLines = []`)
   - Acceptance: When switching away from thinking mode, the thinking message is finalized and state is reset.
 
-- [ ] **Task 5: Update `editTimer` to flush thinking mode**
+- [x] **Task 5: Update `editTimer` to flush thinking mode**
   - Files: `src/telegram.ts`
   - Changes: Modify the `editTimer` `setInterval` callback (line 211-213) to also handle thinking mode:
     ```typescript
@@ -48,7 +48,7 @@
     ```
   - Acceptance: Pending thinking edits are flushed on the timer interval, not just text edits.
 
-- [ ] **Task 6: Handle `thinking_delta` events in the event loop**
+- [x] **Task 6: Handle `thinking_delta` events in the event loop**
   - Files: `src/telegram.ts`
   - Changes: Add a new `else if` branch in the `for await` loop (after the `thinking_start` handler, before `thinking_done`):
     ```typescript
@@ -63,7 +63,7 @@
     This handles the case where `thinking_delta` arrives (even if `thinking_start` was missed for some reason) and accumulates the text.
   - Acceptance: Thinking deltas are accumulated and progressively rendered to the Telegram message.
 
-- [ ] **Task 7: Update `thinking_done` handler to include thinking content**
+- [x] **Task 7: Update `thinking_done` handler to include thinking content**
   - Files: `src/telegram.ts`
   - Changes: Replace the existing `thinking_done` handler (lines 240-245) with logic that:
     1. If `thinkingText` is non-empty:
