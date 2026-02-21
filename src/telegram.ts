@@ -134,6 +134,7 @@ export async function streamToTelegram(
   ctx: Context,
   events: AsyncGenerator<ClaudeEvent>,
   projectName: string,
+  branchName?: string | null,
 ): Promise<StreamResult> {
   const chatId = ctx.chat!.id
   const result: StreamResult = {}
@@ -275,7 +276,7 @@ export async function streamToTelegram(
 
   if (lastTextMessageId && accumulated) {
     const html = markdownToTelegramHtml(accumulated)
-    const footer = formatFooter(projectName, result)
+    const footer = formatFooter(projectName, result, branchName)
     const display = footer ? `${html}\n\n${footer}` : html
     const ok = await safeEditMessage(ctx, chatId, lastTextMessageId, display || "...").catch(() => false)
     if (!ok && footer) {
@@ -284,7 +285,7 @@ export async function streamToTelegram(
     }
   } else if (!lastTextMessageId && (result.cost !== undefined || result.durationMs !== undefined)) {
     // No text message was sent -- send footer as standalone
-    const footer = formatFooter(projectName, result)
+    const footer = formatFooter(projectName, result, branchName)
     if (footer) await ctx.api.sendMessage(chatId, footer, { parse_mode: "HTML" }).catch(() => {})
   }
 
@@ -292,9 +293,9 @@ export async function streamToTelegram(
 }
 
 /** Format metadata footer as HTML */
-function formatFooter(projectName: string, result: StreamResult) {
+function formatFooter(projectName: string, result: StreamResult, branchName?: string | null) {
   const meta: string[] = []
-  if (projectName) meta.push(`Project: ${escapeHtml(projectName)}`)
+  if (projectName) meta.push(`Project: ${branchName ? `${escapeHtml(projectName)} [${escapeHtml(branchName)}]` : escapeHtml(projectName)}`)
   if (result.cost !== undefined) meta.push(`Cost: $${result.cost.toFixed(4)}`)
   if (result.durationMs !== undefined) {
     const secs = (result.durationMs / 1000).toFixed(1)
@@ -305,9 +306,9 @@ function formatFooter(projectName: string, result: StreamResult) {
 }
 
 /** Format metadata footer as plain text */
-function formatFooterPlain(projectName: string, result: StreamResult) {
+function formatFooterPlain(projectName: string, result: StreamResult, branchName?: string | null) {
   const meta: string[] = []
-  if (projectName) meta.push(`Project: ${projectName}`)
+  if (projectName) meta.push(`Project: ${branchName ? `${projectName} [${branchName}]` : projectName}`)
   if (result.cost !== undefined) meta.push(`Cost: $${result.cost.toFixed(4)}`)
   if (result.durationMs !== undefined) {
     const secs = (result.durationMs / 1000).toFixed(1)
