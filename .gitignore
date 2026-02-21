@@ -1,3 +1,6 @@
 node_modules/
 .env
 bun.lock
+
+# auto-pr resolved prompts (generated per-issue, ephemeral)
+.auto-pr/**/prompt-*.md

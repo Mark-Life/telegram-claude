@@ -3,9 +3,11 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/index.ts",
-    "dev": "bun --watch run src/index.ts"
+    "dev": "bun --watch run src/index.ts",
+    "auto-pr": "bun run scripts/auto-pr/index.ts"
   },
   "dependencies": {
+    "execa": "^9.6.1",
     "grammy": "^1.35.0",
     "groq-sdk": "^0.37.0",
     "marked": "^17.0.2"
