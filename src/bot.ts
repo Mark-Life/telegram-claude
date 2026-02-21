@@ -239,6 +239,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
         "/new — start fresh conversation",
         "/stop — kill active process",
         "/status — show current state",
+        "/branch — show current git branch",
+        "/pr — list open pull requests",
         "/help — show this message",
         "",
         "Send any text or voice message to chat with Claude in the active project.",
