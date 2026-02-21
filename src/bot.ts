@@ -313,6 +313,10 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
   })
 
+  bot.callbackQuery("retry:pending", async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "Still processing..." })
+  })
+
   bot.callbackQuery(/^retry:(\d+)$/, async (ctx) => {
     const msgId = parseInt(ctx.match![1], 10)
     const state = getState(ctx.from!.id)
