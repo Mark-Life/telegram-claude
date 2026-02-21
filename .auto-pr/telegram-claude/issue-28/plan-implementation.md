@@ -1,6 +1,6 @@
 # Implementation Checklist: Sanitize ctx.getFile() monkeypatch in bot.ts
 
-- [ ] **Task 1: Add optional `fileId` parameter to `saveUploadedFile`**
+- [x] **Task 1: Add optional `fileId` parameter to `saveUploadedFile`**
   - Files: `src/bot.ts`
   - Changes:
     - Change function signature from `async function saveUploadedFile(ctx: Context, filename: string)` to `async function saveUploadedFile(ctx: Context, filename: string, fileId?: string)` (line 364)
