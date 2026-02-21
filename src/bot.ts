@@ -7,10 +7,14 @@ import { streamToTelegram } from "./telegram"
 import { transcribeAudio } from "./transcribe"
 import { listAllSessions, getSessionProject } from "./history"
 
+type QueuedMessage = { prompt: string; ctx: Context }
+
 type UserState = {
   activeProject: string
   sessions: Map<string, string>
   pinnedMessageId?: number
+  queue: QueuedMessage[]
+  queueStatusMessageId?: number
 }
 
 const userStates = new Map<number, UserState>()
@@ -39,7 +43,7 @@ function buildPromptWithReplyContext(ctx: Context, userText: string) {
 function getState(userId: number): UserState {
   let state = userStates.get(userId)
   if (!state) {
-    state = { activeProject: "", sessions: new Map() }
+    state = { activeProject: "", sessions: new Map(), queue: [] }
     userStates.set(userId, state)
   }
   return state
