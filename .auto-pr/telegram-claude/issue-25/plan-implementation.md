@@ -76,7 +76,7 @@
     4. Set `mode = "none"`
   - Acceptance: When thinking finishes, the message shows the actual thinking content (collapsed if long) with a duration footer. Empty thinking blocks still show just the duration.
 
-- [ ] **Task 8: Verify everything works together**
+- [x] **Task 8: Verify everything works together**
   - Files: `src/claude.ts`, `src/telegram.ts`
   - Changes: None — manual verification
   - Acceptance:
