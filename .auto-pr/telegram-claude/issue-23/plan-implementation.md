@@ -1,6 +1,6 @@
 # Implementation Checklist: Message queuing when Claude is busy
 
-- [ ] **Task 1: Add queue types and state to `UserState`**
+- [x] **Task 1: Add queue types and state to `UserState`**
   - Files: `src/bot.ts`
   - Changes:
     - Add `QueuedMessage` type above `UserState`: `type QueuedMessage = { prompt: string; ctx: Context }`
@@ -8,7 +8,7 @@
     - Update `getState()` (line 42) to initialize `queue: []` in the default state object
   - Acceptance: TypeScript compiles. `getState()` returns state with empty `queue` array.
 
-- [ ] **Task 2: Add `sendOrUpdateQueueStatus` and `cleanupQueueStatus` helpers**
+- [x] **Task 2: Add `sendOrUpdateQueueStatus` and `cleanupQueueStatus` helpers**
   - Files: `src/bot.ts`
   - Changes:
     - Add `sendOrUpdateQueueStatus(ctx: Context, state: UserState)` function inside `createBot()` (after `handlePrompt`, before message handlers). It should:
@@ -20,7 +20,7 @@
       - If `state.queueStatusMessageId` is set, delete the message via `ctx.api.deleteMessage()` (`.catch(() => {})`) and set it to `undefined`
   - Acceptance: Functions exist and compile. No runtime changes yet since nothing calls them.
 
-- [ ] **Task 3: Add `runAndDrain` function**
+- [x] **Task 3: Add `runAndDrain` function**
   - Files: `src/bot.ts`
   - Changes:
     - Add `runAndDrain(ctx: Context, prompt: string, state: UserState, userId: number)` async function inside `createBot()`. Logic:
@@ -34,7 +34,7 @@
         - Otherwise: `const queued = state.queue.splice(0)` to drain all, combine prompts with `queued.map(q => q.prompt).join("\n\n---\n\n")`, set `currentCtx = queued[queued.length - 1].ctx`, call `await cleanupQueueStatus(state, currentCtx)`
   - Acceptance: Function compiles. Not yet called.
 
-- [ ] **Task 4: Rewrite `handlePrompt` to use queue and `runAndDrain`**
+- [x] **Task 4: Rewrite `handlePrompt` to use queue and `runAndDrain`**
   - Files: `src/bot.ts`
   - Changes:
     - Replace the body of `handlePrompt()` (lines 305-322) with:
@@ -44,7 +44,7 @@
       - Replace the remaining lines (sessionId lookup, runClaude call, streamToTelegram, sessionId storage) with: `await runAndDrain(ctx, prompt, state, userId)`
   - Acceptance: Sending a message while Claude is idle works exactly as before. Sending a message while Claude is busy shows "Message queued (1 in queue)" with a Force Send button instead of the error. Queued messages are sent automatically when the current process finishes.
 
-- [ ] **Task 5: Add `force_send` callback query handler**
+- [x] **Task 5: Add `force_send` callback query handler**
   - Files: `src/bot.ts`
   - Changes:
     - Add a callback query handler (alongside the existing `project:`, `history:`, `session:` handlers):
@@ -60,7 +60,7 @@
     - No queue manipulation needed — stopping the process triggers `streamToTelegram()` to return, which causes the `runAndDrain` loop to drain queued messages automatically.
   - Acceptance: Pressing "Force Send" button stops the running Claude process. Queued messages are then sent as a combined prompt. The callback query toast says "Stopping current task...".
 
-- [ ] **Task 6: Update `/stop` command to clear queue**
+- [x] **Task 6: Update `/stop` command to clear queue**
   - Files: `src/bot.ts`
   - Changes:
     - Replace the `/stop` handler (lines 174-177) with:
@@ -74,7 +74,7 @@
       - `await ctx.reply(msg, { reply_markup: mainKeyboard })`
   - Acceptance: `/stop` stops the process AND clears any queued messages. Queue status message is deleted. Reply confirms both actions.
 
-- [ ] **Task 7: Update `/status` command to show queue count**
+- [x] **Task 7: Update `/status` command to show queue count**
   - Files: `src/bot.ts`
   - Changes:
     - In the `/status` handler (lines 179-188), after the existing `sessionCount` variable:
@@ -82,7 +82,7 @@
       - Append to the reply text: `+ (queueSize > 0 ? `\nQueued: ${queueSize}` : "")`
   - Acceptance: `/status` shows "Queued: N" line when messages are queued, omits it when queue is empty.
 
-- [ ] **Task 8: Update `/new` command to clear queue**
+- [x] **Task 8: Update `/new` command to clear queue**
   - Files: `src/bot.ts`
   - Changes:
     - In the `/new` handler (lines 207-214), after `state.sessions.delete(state.activeProject)`:
@@ -90,7 +90,7 @@
       - Add `await cleanupQueueStatus(state, ctx)`
   - Acceptance: `/new` clears the session AND any queued messages.
 
-- [ ] **Task 9: Clear queue on project switch**
+- [x] **Task 9: Clear queue on project switch**
   - Files: `src/bot.ts`
   - Changes:
     - In the `project:` callback query handler (lines 140-172), after `state.activeProject = fullPath` (line 157):
@@ -98,7 +98,7 @@
       - Add `await cleanupQueueStatus(state, ctx)`
   - Acceptance: Switching projects clears any queued messages that were intended for the previous project.
 
-- [ ] **Task 10: Verify everything works together**
+- [x] **Task 10: Verify everything works together**
   - Files: all modified files (`src/bot.ts`)
   - Changes: Manual testing of all scenarios:
     1. Send message while idle — works as before (no regression)
