@@ -12,7 +12,7 @@
     - Remove `state.pinnedMessageId = pinnedId` from L170 (inside the `if (pinnedId)` block at L168-171)
   - Acceptance: On project switch, all pinned messages in the chat are unpinned before the new project message is pinned. No reference to `pinnedMessageId` remains in this handler.
 
-- [ ] **Task 3: Replace targeted unpin with `unpinAllChatMessages` in session resume callback**
+- [x] **Task 3: Replace targeted unpin with `unpinAllChatMessages` in session resume callback**
   - Files: `src/bot.ts`
   - Changes: In the `bot.callbackQuery(/^session:(.+)$/, ...)` handler (L275-302):
     - Replace L294-296 (`if (state.pinnedMessageId) { await ctx.api.unpinChatMessage(...) }`) with `await ctx.api.unpinAllChatMessages(chatId).catch(() => {})`

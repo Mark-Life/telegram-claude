@@ -287,13 +287,10 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const projectName = basename(state.activeProject)
     await ctx.answerCallbackQuery({ text: "Session resumed" })
     const msg = await ctx.editMessageText(`Resumed session in <b>${escapeHtml(projectName)}</b>. Next message continues this conversation.`, { parse_mode: "HTML" })
-    if (state.pinnedMessageId) {
-      await ctx.api.unpinChatMessage(chatId, state.pinnedMessageId).catch(() => {})
-    }
+    await ctx.api.unpinAllChatMessages(chatId).catch(() => {})
     const pinnedId = typeof msg === "object" && "message_id" in msg ? msg.message_id : undefined
     if (pinnedId) {
       await ctx.api.pinChatMessage(chatId, pinnedId, { disable_notification: true }).catch(() => {})
-      state.pinnedMessageId = pinnedId
     }
   })
 
