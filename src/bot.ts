@@ -404,11 +404,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const filename = `photo_${Date.now()}.jpg`
 
     try {
-      // Override ctx.getFile to use the largest photo's file_id
-      const origGetFile = ctx.getFile.bind(ctx)
-      ctx.getFile = () => ctx.api.getFile(largest.file_id) as ReturnType<typeof origGetFile>
-
-      const dest = await saveUploadedFile(ctx, filename)
+      const dest = await saveUploadedFile(ctx, filename, largest.file_id)
       if (!dest) return
 
       const caption = ctx.message.caption ?? "See the attached photo."

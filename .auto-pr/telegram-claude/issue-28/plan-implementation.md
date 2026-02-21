@@ -7,7 +7,7 @@
     - Replace `const file = await ctx.getFile()` (line 371) with `const file = fileId ? await ctx.api.getFile(fileId) : await ctx.getFile()`
   - Acceptance: `saveUploadedFile` accepts an optional third `fileId` argument. When omitted, behavior is identical to before (calls `ctx.getFile()`). No type errors.
 
-- [ ] **Task 2: Remove monkeypatch and pass `fileId` in photo handler**
+- [x] **Task 2: Remove monkeypatch and pass `fileId` in photo handler**
   - Files: `src/bot.ts`
   - Changes:
     - Delete the 3-line monkeypatch block (lines 407-409):
