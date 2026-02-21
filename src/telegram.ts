@@ -303,16 +303,3 @@ function formatFooter(projectName: string, result: StreamResult) {
   if (result.turns !== undefined && result.turns > 1) meta.push(`Turns: ${result.turns}`)
   return meta.length > 0 ? `<i>${meta.join(" | ")}</i>` : ""
 }
-
-/** Format metadata footer as plain text */
-function formatFooterPlain(projectName: string, result: StreamResult) {
-  const meta: string[] = []
-  if (projectName) meta.push(`Project: ${projectName}`)
-  if (result.cost !== undefined) meta.push(`Cost: $${result.cost.toFixed(4)}`)
-  if (result.durationMs !== undefined) {
-    const secs = (result.durationMs / 1000).toFixed(1)
-    meta.push(`Time: ${secs}s`)
-  }
-  if (result.turns !== undefined && result.turns > 1) meta.push(`Turns: ${result.turns}`)
-  return meta.join(" | ")
-}
