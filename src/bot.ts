@@ -314,15 +314,14 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       return
     }
 
-    const sessionId = state.sessions.get(state.activeProject)
-    const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
-
-    const events = runClaude(ctx.from!.id, prompt, state.activeProject, ctx.chat!.id, sessionId)
-    const result = await streamToTelegram(ctx, events, projectName)
-
-    if (result.sessionId) {
-      state.sessions.set(state.activeProject, result.sessionId)
+    const userId = ctx.from!.id
+    if (hasActiveProcess(userId)) {
+      state.queue.push({ prompt, ctx })
+      await sendOrUpdateQueueStatus(ctx, state)
+      return
     }
+
+    await runAndDrain(ctx, prompt, state, userId)
   }
 
   /** Run a Claude prompt and drain any queued messages afterward */
