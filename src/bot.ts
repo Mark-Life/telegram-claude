@@ -199,7 +199,9 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const projectLabel = ghUrl
       ? `<a href="${escapeHtml(ghUrl)}">${escapeHtml(displayName)}</a>`
       : escapeHtml(displayName)
-    const msg = await ctx.editMessageText(`Active project: ${projectLabel}`, { parse_mode: "HTML" })
+    const branch = isGeneral ? null : getCurrentBranch(fullPath)
+    const branchSuffix = branch ? ` [${escapeHtml(branch)}]` : ""
+    const msg = await ctx.editMessageText(`Active project: ${projectLabel}${branchSuffix}`, { parse_mode: "HTML" })
     if (state.pinnedMessageId) {
       await ctx.api.unpinChatMessage(chatId, state.pinnedMessageId).catch(() => {})
     }
