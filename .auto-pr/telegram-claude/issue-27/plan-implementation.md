@@ -24,7 +24,7 @@
   - Changes: Search for any leftover references to `pinnedMessageId` in the codebase. There should be zero occurrences after Tasks 1-3.
   - Acceptance: `grep -r "pinnedMessageId" src/` returns no results.
 
-- [ ] **Task 5: Verify everything works together**
+- [x] **Task 5: Verify everything works together**
   - Files: `src/bot.ts`
   - Changes: No code changes. Verify:
     1. `bun run src/index.ts` starts without errors
