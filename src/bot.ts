@@ -159,6 +159,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const state = getState(ctx.from!.id)
     const chatId = ctx.chat!.id
     state.activeProject = fullPath
+    state.queue = []
+    await cleanupQueueStatus(state, ctx)
     await ctx.answerCallbackQuery({ text: `Switched to ${displayName}` })
     const ghUrl = isGeneral ? null : getGitHubUrl(fullPath)
     const projectLabel = ghUrl
@@ -176,8 +178,14 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
   })
 
   bot.command("stop", async (ctx) => {
-    const stopped = stopClaude(ctx.from!.id)
-    await ctx.reply(stopped ? "Process stopped." : "No active process.", { reply_markup: mainKeyboard })
+    const userId = ctx.from!.id
+    const state = getState(userId)
+    const stopped = stopClaude(userId)
+    const hadQueue = state.queue.length > 0
+    state.queue = []
+    await cleanupQueueStatus(state, ctx)
+    const msg = stopped ? "Process stopped." + (hadQueue ? " Queue cleared." : "") : "No active process."
+    await ctx.reply(msg, { reply_markup: mainKeyboard })
   })
 
   bot.command("status", async (ctx) => {
@@ -187,8 +195,9 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       : "(none)"
     const running = hasActiveProcess(ctx.from!.id) ? "Yes" : "No"
     const sessionCount = state.sessions.size
+    const queueSize = state.queue.length
 
-    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}`, { reply_markup: mainKeyboard })
+    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}` + (queueSize > 0 ? `\nQueued: ${queueSize}` : ""), { reply_markup: mainKeyboard })
   })
 
   bot.command("help", async (ctx) => {
@@ -214,6 +223,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       state.activeProject = projectsDir
     }
     state.sessions.delete(state.activeProject)
+    state.queue = []
+    await cleanupQueueStatus(state, ctx)
     await ctx.reply("Session cleared. Next message starts a fresh conversation.", { reply_markup: mainKeyboard })
   })
 
