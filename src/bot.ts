@@ -325,6 +325,30 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
   }
 
+  /** Run a Claude prompt and drain any queued messages afterward */
+  async function runAndDrain(ctx: Context, prompt: string, state: UserState, userId: number) {
+    let currentCtx = ctx
+    let currentPrompt = prompt
+    while (true) {
+      const sessionId = state.sessions.get(state.activeProject)
+      const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
+      try {
+        const events = runClaude(userId, currentPrompt, state.activeProject, currentCtx.chat!.id, sessionId)
+        const result = await streamToTelegram(currentCtx, events, projectName)
+        if (result.sessionId) {
+          state.sessions.set(state.activeProject, result.sessionId)
+        }
+      } catch (e) {
+        console.error("runAndDrain error:", e)
+      }
+      if (state.queue.length === 0) break
+      const queued = state.queue.splice(0)
+      currentPrompt = queued.map((q) => q.prompt).join("\n\n---\n\n")
+      currentCtx = queued[queued.length - 1].ctx
+      await cleanupQueueStatus(state, currentCtx)
+    }
+  }
+
   /** Send or update the "Message queued" status message with Force Send button */
   async function sendOrUpdateQueueStatus(ctx: Context, state: UserState) {
     const text = `Message queued (${state.queue.length} in queue)`
