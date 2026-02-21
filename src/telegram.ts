@@ -277,7 +277,6 @@ export async function streamToTelegram(
       } else if (event.kind === "thinking_done") {
         const secs = (event.durationMs / 1000).toFixed(1)
         if (mode === "thinking" && thinkingText) {
-          await flushThinking(true)
           let display = thinkingText
           if (display.length > MAX_MSG_LENGTH - 200) {
             display = "..." + display.slice(display.length - (MAX_MSG_LENGTH - 200))
@@ -293,7 +292,7 @@ export async function streamToTelegram(
           await safeEditMessage(ctx, chatId, messageId, `<i>Thought for ${secs}s</i>`).catch(() => {})
         }
         thinkingText = ""
-        mode = "none" as MessageMode
+        mode = "none"
       } else if (event.kind === "result") {
         result.sessionId = event.sessionId
         result.cost = event.cost
