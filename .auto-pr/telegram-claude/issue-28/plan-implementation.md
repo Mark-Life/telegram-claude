@@ -19,7 +19,7 @@
     - Change `const dest = await saveUploadedFile(ctx, filename)` (line 411) to `const dest = await saveUploadedFile(ctx, filename, largest.file_id)`
   - Acceptance: Photo handler no longer mutates `ctx`. `largest.file_id` is passed explicitly to `saveUploadedFile`. No monkeypatch code remains.
 
-- [ ] **Task 3: Verify everything works together**
+- [x] **Task 3: Verify everything works together**
   - Files: `src/bot.ts`
   - Changes: No code changes. Manual verification:
     1. Run `bun run src/index.ts` — bot starts without errors
