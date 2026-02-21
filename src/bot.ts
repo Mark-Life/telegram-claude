@@ -305,6 +305,14 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
   })
 
+  bot.callbackQuery(/^force_send:(\d+)$/, async (ctx) => {
+    const userId = parseInt(ctx.match![1], 10)
+    const stopped = stopClaude(userId)
+    await ctx.answerCallbackQuery({
+      text: stopped ? "Stopping current task..." : "No active process",
+    })
+  })
+
   /** Send a prompt to Claude and stream the response */
   async function handlePrompt(ctx: Context, prompt: string) {
     const state = getState(ctx.from!.id)
