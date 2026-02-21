@@ -53,6 +53,8 @@ bot.start({
       { command: "new", description: "Start fresh conversation" },
       { command: "stop", description: "Kill active process" },
       { command: "status", description: "Show current state" },
+      { command: "branch", description: "Show current git branch" },
+      { command: "pr", description: "List open pull requests" },
       { command: "help", description: "Show available commands" },
     ]
     const scopes = [
