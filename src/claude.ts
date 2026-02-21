@@ -37,6 +37,7 @@ export type ClaudeEvent =
   | { kind: "text_delta"; text: string }
   | { kind: "tool_use"; name: string; input: string }
   | { kind: "thinking_start" }
+  | { kind: "thinking_delta"; text: string }
   | { kind: "thinking_done"; durationMs: number }
   | { kind: "result"; text: string; sessionId: string; cost: number; durationMs: number; turns: number }
   | { kind: "error"; message: string }
@@ -123,7 +124,10 @@ function createStreamParser() {
         } else if (delta.type === "input_json_delta" && currentBlockType === "tool_use") {
           toolInputJson += delta.partial_json
         }
-        // thinking_delta and signature_delta: ignored (we just show "Thinking...")
+        } else if (delta.type === "thinking_delta" && currentBlockType === "thinking") {
+          if (delta.thinking) yield { kind: "thinking_delta", text: delta.thinking }
+        }
+        // signature_delta: ignored
       } else if (
         parsed.type === "stream_event" &&
         parsed.event.type === "content_block_stop"

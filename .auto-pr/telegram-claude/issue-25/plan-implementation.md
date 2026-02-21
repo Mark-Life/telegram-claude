@@ -1,11 +1,11 @@
 # Implementation Checklist: Stream thinking content instead of just timer
 
-- [ ] **Task 1: Add `thinking_delta` event to `ClaudeEvent` union in `claude.ts`**
+- [x] **Task 1: Add `thinking_delta` event to `ClaudeEvent` union in `claude.ts`**
   - Files: `src/claude.ts`
   - Changes: Add `| { kind: "thinking_delta"; text: string }` to the `ClaudeEvent` type union (after line 40, between `thinking_done` and `result`)
   - Acceptance: TypeScript compiles without errors. The `ClaudeEvent` type includes `thinking_delta` variant.
 
-- [ ] **Task 2: Yield `thinking_delta` events from the stream parser in `claude.ts`**
+- [x] **Task 2: Yield `thinking_delta` events from the stream parser in `claude.ts`**
   - Files: `src/claude.ts`
   - Changes: Replace the comment on line 126 (`// thinking_delta and signature_delta: ignored`) with actual handling:
     ```typescript
