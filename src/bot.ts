@@ -7,10 +7,14 @@ import { streamToTelegram } from "./telegram"
 import { transcribeAudio } from "./transcribe"
 import { listAllSessions, getSessionProject } from "./history"
 
+type QueuedMessage = { prompt: string; ctx: Context }
+
 type UserState = {
   activeProject: string
   sessions: Map<string, string>
   pinnedMessageId?: number
+  queue: QueuedMessage[]
+  queueStatusMessageId?: number
 }
 
 const userStates = new Map<number, UserState>()
@@ -39,7 +43,7 @@ function buildPromptWithReplyContext(ctx: Context, userText: string) {
 function getState(userId: number): UserState {
   let state = userStates.get(userId)
   if (!state) {
-    state = { activeProject: "", sessions: new Map() }
+    state = { activeProject: "", sessions: new Map(), queue: [] }
     userStates.set(userId, state)
   }
   return state
@@ -155,6 +159,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const state = getState(ctx.from!.id)
     const chatId = ctx.chat!.id
     state.activeProject = fullPath
+    state.queue = []
+    await cleanupQueueStatus(state, ctx)
     await ctx.answerCallbackQuery({ text: `Switched to ${displayName}` })
     const ghUrl = isGeneral ? null : getGitHubUrl(fullPath)
     const projectLabel = ghUrl
@@ -172,8 +178,14 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
   })
 
   bot.command("stop", async (ctx) => {
-    const stopped = stopClaude(ctx.from!.id)
-    await ctx.reply(stopped ? "Process stopped." : "No active process.", { reply_markup: mainKeyboard })
+    const userId = ctx.from!.id
+    const state = getState(userId)
+    const stopped = stopClaude(userId)
+    const hadQueue = state.queue.length > 0
+    state.queue = []
+    await cleanupQueueStatus(state, ctx)
+    const msg = stopped ? "Process stopped." + (hadQueue ? " Queue cleared." : "") : "No active process."
+    await ctx.reply(msg, { reply_markup: mainKeyboard })
   })
 
   bot.command("status", async (ctx) => {
@@ -183,8 +195,9 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       : "(none)"
     const running = hasActiveProcess(ctx.from!.id) ? "Yes" : "No"
     const sessionCount = state.sessions.size
+    const queueSize = state.queue.length
 
-    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}`, { reply_markup: mainKeyboard })
+    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}` + (queueSize > 0 ? `\nQueued: ${queueSize}` : ""), { reply_markup: mainKeyboard })
   })
 
   bot.command("help", async (ctx) => {
@@ -210,6 +223,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       state.activeProject = projectsDir
     }
     state.sessions.delete(state.activeProject)
+    state.queue = []
+    await cleanupQueueStatus(state, ctx)
     await ctx.reply("Session cleared. Next message starts a fresh conversation.", { reply_markup: mainKeyboard })
   })
 
@@ -301,6 +316,14 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
   })
 
+  bot.callbackQuery(/^force_send:(\d+)$/, async (ctx) => {
+    const userId = parseInt(ctx.match![1], 10)
+    const stopped = stopClaude(userId)
+    await ctx.answerCallbackQuery({
+      text: stopped ? "Stopping current task..." : "No active process",
+    })
+  })
+
   /** Send a prompt to Claude and stream the response */
   async function handlePrompt(ctx: Context, prompt: string) {
     const state = getState(ctx.from!.id)
@@ -310,14 +333,57 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       return
     }
 
-    const sessionId = state.sessions.get(state.activeProject)
-    const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
+    const userId = ctx.from!.id
+    if (hasActiveProcess(userId)) {
+      state.queue.push({ prompt, ctx })
+      await sendOrUpdateQueueStatus(ctx, state)
+      return
+    }
 
-    const events = runClaude(ctx.from!.id, prompt, state.activeProject, ctx.chat!.id, sessionId)
-    const result = await streamToTelegram(ctx, events, projectName)
+    await runAndDrain(ctx, prompt, state, userId)
+  }
 
-    if (result.sessionId) {
-      state.sessions.set(state.activeProject, result.sessionId)
+  /** Run a Claude prompt and drain any queued messages afterward */
+  async function runAndDrain(ctx: Context, prompt: string, state: UserState, userId: number) {
+    let currentCtx = ctx
+    let currentPrompt = prompt
+    while (true) {
+      const sessionId = state.sessions.get(state.activeProject)
+      const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
+      try {
+        const events = runClaude(userId, currentPrompt, state.activeProject, currentCtx.chat!.id, sessionId)
+        const result = await streamToTelegram(currentCtx, events, projectName)
+        if (result.sessionId) {
+          state.sessions.set(state.activeProject, result.sessionId)
+        }
+      } catch (e) {
+        console.error("runAndDrain error:", e)
+      }
+      if (state.queue.length === 0) break
+      const queued = state.queue.splice(0)
+      currentPrompt = queued.map((q) => q.prompt).join("\n\n---\n\n")
+      currentCtx = queued[queued.length - 1].ctx
+      await cleanupQueueStatus(state, currentCtx)
+    }
+  }
+
+  /** Send or update the "Message queued" status message with Force Send button */
+  async function sendOrUpdateQueueStatus(ctx: Context, state: UserState) {
+    const text = `Message queued (${state.queue.length} in queue)`
+    const keyboard = new InlineKeyboard().text("Force Send — stops current task", `force_send:${ctx.from!.id}`)
+    if (state.queueStatusMessageId) {
+      await ctx.api.editMessageText(ctx.chat!.id, state.queueStatusMessageId, text, { reply_markup: keyboard }).catch(() => {})
+    } else {
+      const msg = await ctx.reply(text, { reply_markup: keyboard })
+      state.queueStatusMessageId = msg.message_id
+    }
+  }
+
+  /** Delete the queue status message if it exists */
+  async function cleanupQueueStatus(state: UserState, ctx: Context) {
+    if (state.queueStatusMessageId) {
+      await ctx.api.deleteMessage(ctx.chat!.id, state.queueStatusMessageId).catch(() => {})
+      state.queueStatusMessageId = undefined
     }
   }
 
