@@ -224,8 +224,10 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       : "(none)"
     const running = hasActiveProcess(ctx.from!.id) ? "Yes" : "No"
     const sessionCount = state.sessions.size
+    const branch = state.activeProject && state.activeProject !== projectsDir ? getCurrentBranch(state.activeProject) : null
+    const branchLine = branch ? `\nBranch: ${branch}` : ""
 
-    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}`, { reply_markup: mainKeyboard })
+    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}`, { reply_markup: mainKeyboard })
   })
 
   bot.command("help", async (ctx) => {
