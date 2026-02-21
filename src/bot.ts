@@ -10,7 +10,6 @@ import { listAllSessions, getSessionProject } from "./history"
 type UserState = {
   activeProject: string
   sessions: Map<string, string>
-  pinnedMessageId?: number
 }
 
 const userStates = new Map<number, UserState>()

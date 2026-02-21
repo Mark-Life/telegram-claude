@@ -1,6 +1,6 @@
 # Implementation Checklist: Auto-unpin old project messages on project switch
 
-- [ ] **Task 1: Remove `pinnedMessageId` from `UserState` type**
+- [x] **Task 1: Remove `pinnedMessageId` from `UserState` type**
   - Files: `src/bot.ts`
   - Changes: Remove `pinnedMessageId?: number` (L13) from the `UserState` type definition at L10-14
   - Acceptance: `UserState` type has only `activeProject` and `sessions` fields. TypeScript compiles without errors.
