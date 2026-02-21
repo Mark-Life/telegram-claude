@@ -270,6 +270,27 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     await ctx.reply(lines.join("\n"), { parse_mode: "HTML", reply_markup: mainKeyboard })
   })
 
+  bot.command("pr", async (ctx) => {
+    const state = getState(ctx.from!.id)
+    if (!state.activeProject || state.activeProject === projectsDir) {
+      await ctx.reply("No project selected or in general mode.", { reply_markup: mainKeyboard })
+      return
+    }
+
+    const prs = listOpenPRs(state.activeProject)
+    if (prs === null) {
+      await ctx.reply("Could not fetch PRs. Is gh CLI authenticated?", { reply_markup: mainKeyboard })
+      return
+    }
+    if (prs.length === 0) {
+      await ctx.reply("No open PRs.", { reply_markup: mainKeyboard })
+      return
+    }
+
+    const lines = prs.map((pr) => `#${pr.number} <a href="${escapeHtml(pr.url)}">${escapeHtml(pr.title)}</a> (<code>${escapeHtml(pr.headRefName)}</code>)`)
+    await ctx.reply(lines.join("\n"), { parse_mode: "HTML", reply_markup: mainKeyboard })
+  })
+
   bot.command("new", async (ctx) => {
     const state = getState(ctx.from!.id)
     if (!state.activeProject) {
