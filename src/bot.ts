@@ -84,6 +84,45 @@ function getGitHubUrl(projectPath: string) {
   }
 }
 
+/** Get the current git branch for a project directory, or null on error */
+function getCurrentBranch(projectPath: string) {
+  try {
+    const branch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: projectPath, timeout: 3000 })
+      .toString()
+      .trim()
+    return branch === "HEAD" ? "(detached)" : branch
+  } catch {
+    return null
+  }
+}
+
+/** List all local branch names for a project directory, or null on error */
+function listBranches(projectPath: string) {
+  try {
+    const output = execSync("git branch --format='%(refname:short)'", { cwd: projectPath, timeout: 3000 })
+      .toString()
+      .trim()
+    return output ? output.split("\n").map((b) => b.trim()) : []
+  } catch {
+    return null
+  }
+}
+
+/** List open PRs for a project directory via gh CLI, or null on error */
+function listOpenPRs(projectPath: string) {
+  try {
+    const output = execSync("gh pr list --state open --json number,title,headRefName,url --limit 10", {
+      cwd: projectPath,
+      timeout: 10000,
+    })
+      .toString()
+      .trim()
+    return JSON.parse(output) as { number: number; title: string; headRefName: string; url: string }[]
+  } catch {
+    return null
+  }
+}
+
 /** Create and configure the bot */
 export function createBot(token: string, allowedUserId: number, projectsDir: string) {
   const bot = new Bot(token)
