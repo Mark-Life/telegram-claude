@@ -325,6 +325,26 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
   }
 
+  /** Send or update the "Message queued" status message with Force Send button */
+  async function sendOrUpdateQueueStatus(ctx: Context, state: UserState) {
+    const text = `Message queued (${state.queue.length} in queue)`
+    const keyboard = new InlineKeyboard().text("Force Send — stops current task", `force_send:${ctx.from!.id}`)
+    if (state.queueStatusMessageId) {
+      await ctx.api.editMessageText(ctx.chat!.id, state.queueStatusMessageId, text, { reply_markup: keyboard }).catch(() => {})
+    } else {
+      const msg = await ctx.reply(text, { reply_markup: keyboard })
+      state.queueStatusMessageId = msg.message_id
+    }
+  }
+
+  /** Delete the queue status message if it exists */
+  async function cleanupQueueStatus(state: UserState, ctx: Context) {
+    if (state.queueStatusMessageId) {
+      await ctx.api.deleteMessage(ctx.chat!.id, state.queueStatusMessageId).catch(() => {})
+      state.queueStatusMessageId = undefined
+    }
+  }
+
   bot.on("message:text", (ctx) => {
     const prompt = buildPromptWithReplyContext(ctx, ctx.message.text)
     handlePrompt(ctx, prompt).catch((e) => console.error("handlePrompt error:", e))
