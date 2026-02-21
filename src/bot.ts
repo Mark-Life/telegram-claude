@@ -247,6 +247,29 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     )
   })
 
+  bot.command("branch", async (ctx) => {
+    const state = getState(ctx.from!.id)
+    if (!state.activeProject || state.activeProject === projectsDir) {
+      await ctx.reply("No project selected or in general mode.", { reply_markup: mainKeyboard })
+      return
+    }
+
+    const current = getCurrentBranch(state.activeProject)
+    if (!current) {
+      await ctx.reply("Not a git repository.", { reply_markup: mainKeyboard })
+      return
+    }
+
+    const branches = listBranches(state.activeProject)
+    const projectName = basename(state.activeProject)
+    const others = (branches ?? []).filter((b) => b !== current).slice(0, 20)
+    const lines = [`<b>${escapeHtml(projectName)}</b>`, `Current: <code>${escapeHtml(current)}</code>`]
+    if (others.length > 0) {
+      lines.push("", ...others.map((b) => `<code>${escapeHtml(b)}</code>`))
+    }
+    await ctx.reply(lines.join("\n"), { parse_mode: "HTML", reply_markup: mainKeyboard })
+  })
+
   bot.command("new", async (ctx) => {
     const state = getState(ctx.from!.id)
     if (!state.activeProject) {
