@@ -361,14 +361,14 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
   })
 
   /** Download a Telegram file and save to project's user-sent-files dir */
-  async function saveUploadedFile(ctx: Context, filename: string) {
+  async function saveUploadedFile(ctx: Context, filename: string, fileId?: string) {
     const state = getState(ctx.from!.id)
     if (!state.activeProject) {
       await ctx.reply("No project selected. Use /projects to pick one.", { reply_markup: mainKeyboard })
       return null
     }
 
-    const file = await ctx.getFile()
+    const file = fileId ? await ctx.api.getFile(fileId) : await ctx.getFile()
     const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`
     const res = await fetch(url)
     const buffer = Buffer.from(await res.arrayBuffer())
@@ -404,11 +404,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const filename = `photo_${Date.now()}.jpg`
 
     try {
-      // Override ctx.getFile to use the largest photo's file_id
-      const origGetFile = ctx.getFile.bind(ctx)
-      ctx.getFile = () => ctx.api.getFile(largest.file_id) as ReturnType<typeof origGetFile>
-
-      const dest = await saveUploadedFile(ctx, filename)
+      const dest = await saveUploadedFile(ctx, filename, largest.file_id)
       if (!dest) return
 
       const caption = ctx.message.caption ?? "See the attached photo."
