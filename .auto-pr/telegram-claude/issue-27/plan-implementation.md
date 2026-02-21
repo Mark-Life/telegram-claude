@@ -19,7 +19,7 @@
     - Remove `state.pinnedMessageId = pinnedId` from L300 (inside the `if (pinnedId)` block at L298-301)
   - Acceptance: On session resume, all pinned messages are unpinned before the new session message is pinned. No reference to `pinnedMessageId` remains in this handler.
 
-- [ ] **Task 4: Verify no remaining references to `pinnedMessageId`**
+- [x] **Task 4: Verify no remaining references to `pinnedMessageId`**
   - Files: `src/bot.ts` (and grep across entire `src/` directory)
   - Changes: Search for any leftover references to `pinnedMessageId` in the codebase. There should be zero occurrences after Tasks 1-3.
   - Acceptance: `grep -r "pinnedMessageId" src/` returns no results.
