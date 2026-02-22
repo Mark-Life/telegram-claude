@@ -95,6 +95,45 @@ function getGitHubUrl(projectPath: string) {
   }
 }
 
+/** Get the current git branch for a project directory, or null on error */
+function getCurrentBranch(projectPath: string) {
+  try {
+    const branch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: projectPath, timeout: 3000 })
+      .toString()
+      .trim()
+    return branch === "HEAD" ? "(detached)" : branch
+  } catch {
+    return null
+  }
+}
+
+/** List all local branch names for a project directory, or null on error */
+function listBranches(projectPath: string) {
+  try {
+    const output = execSync("git branch --format='%(refname:short)'", { cwd: projectPath, timeout: 3000 })
+      .toString()
+      .trim()
+    return output ? output.split("\n").map((b) => b.trim()) : []
+  } catch {
+    return null
+  }
+}
+
+/** List open PRs for a project directory via gh CLI, or null on error */
+function listOpenPRs(projectPath: string) {
+  try {
+    const output = execSync("gh pr list --state open --json number,title,headRefName,url --limit 10", {
+      cwd: projectPath,
+      timeout: 10000,
+    })
+      .toString()
+      .trim()
+    return JSON.parse(output) as { number: number; title: string; headRefName: string; url: string }[]
+  } catch {
+    return null
+  }
+}
+
 /** Create and configure the bot */
 export function createBot(token: string, allowedUserId: number, projectsDir: string) {
   const bot = new Bot(token)
@@ -171,7 +210,9 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const projectLabel = ghUrl
       ? `<a href="${escapeHtml(ghUrl)}">${escapeHtml(displayName)}</a>`
       : escapeHtml(displayName)
-    const msg = await ctx.editMessageText(`Active project: ${projectLabel}`, { parse_mode: "HTML" })
+    const branch = isGeneral ? null : getCurrentBranch(fullPath)
+    const branchSuffix = branch ? ` [${escapeHtml(branch)}]` : ""
+    const msg = await ctx.editMessageText(`Active project: ${projectLabel}${branchSuffix}`, { parse_mode: "HTML" })
     await ctx.api.unpinAllChatMessages(chatId).catch(() => {})
     const pinnedId = typeof msg === "object" && "message_id" in msg ? msg.message_id : undefined
     if (pinnedId) {
@@ -191,8 +232,10 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       : "(none)"
     const running = hasActiveProcess(ctx.from!.id) ? "Yes" : "No"
     const sessionCount = state.sessions.size
+    const branch = state.activeProject && state.activeProject !== projectsDir ? getCurrentBranch(state.activeProject) : null
+    const branchLine = branch ? `\nBranch: ${branch}` : ""
 
-    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}`, { reply_markup: mainKeyboard })
+    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}`, { reply_markup: mainKeyboard })
   })
 
   bot.command("help", async (ctx) => {
@@ -204,12 +247,58 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
         "/new — start fresh conversation",
         "/stop — kill active process",
         "/status — show current state",
+        "/branch — show current git branch",
+        "/pr — list open pull requests",
         "/help — show this message",
         "",
         "Send any text or voice message to chat with Claude in the active project.",
       ].join("\n"),
       { parse_mode: "HTML", reply_markup: mainKeyboard },
     )
+  })
+
+  bot.command("branch", async (ctx) => {
+    const state = getState(ctx.from!.id)
+    if (!state.activeProject || state.activeProject === projectsDir) {
+      await ctx.reply("No project selected or in general mode.", { reply_markup: mainKeyboard })
+      return
+    }
+
+    const current = getCurrentBranch(state.activeProject)
+    if (!current) {
+      await ctx.reply("Not a git repository.", { reply_markup: mainKeyboard })
+      return
+    }
+
+    const branches = listBranches(state.activeProject)
+    const projectName = basename(state.activeProject)
+    const others = (branches ?? []).filter((b) => b !== current).slice(0, 20)
+    const lines = [`<b>${escapeHtml(projectName)}</b>`, `Current: <code>${escapeHtml(current)}</code>`]
+    if (others.length > 0) {
+      lines.push("", ...others.map((b) => `<code>${escapeHtml(b)}</code>`))
+    }
+    await ctx.reply(lines.join("\n"), { parse_mode: "HTML", reply_markup: mainKeyboard })
+  })
+
+  bot.command("pr", async (ctx) => {
+    const state = getState(ctx.from!.id)
+    if (!state.activeProject || state.activeProject === projectsDir) {
+      await ctx.reply("No project selected or in general mode.", { reply_markup: mainKeyboard })
+      return
+    }
+
+    const prs = listOpenPRs(state.activeProject)
+    if (prs === null) {
+      await ctx.reply("Could not fetch PRs. Is gh CLI authenticated?", { reply_markup: mainKeyboard })
+      return
+    }
+    if (prs.length === 0) {
+      await ctx.reply("No open PRs.", { reply_markup: mainKeyboard })
+      return
+    }
+
+    const lines = prs.map((pr) => `#${pr.number} <a href="${escapeHtml(pr.url)}">${escapeHtml(pr.title)}</a> (<code>${escapeHtml(pr.headRefName)}</code>)`)
+    await ctx.reply(lines.join("\n"), { parse_mode: "HTML", reply_markup: mainKeyboard })
   })
 
   bot.command("new", async (ctx) => {
@@ -333,10 +422,11 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
     const sessionId = state.sessions.get(state.activeProject)
     const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
+    const branchName = state.activeProject !== projectsDir ? getCurrentBranch(state.activeProject) : null
 
     const retryKeyboard = new InlineKeyboard().text("Retry", "retry:pending")
     const events = runClaude(ctx.from!.id, prompt, state.activeProject, ctx.chat!.id, sessionId)
-    const result = await streamToTelegram(ctx, events, projectName, { replyMarkup: retryKeyboard })
+    const result = await streamToTelegram(ctx, events, projectName, { replyMarkup: retryKeyboard, branchName })
 
     if (result.sessionId) {
       state.sessions.set(state.activeProject, result.sessionId)
