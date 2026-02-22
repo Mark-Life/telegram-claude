@@ -152,6 +152,7 @@ export async function streamToTelegram(
   let lastEditTime = 0
   let pendingEdit = false
   let toolLines: string[] = []
+  let thinkingText = ""
   let lastTextMessageId = 0
 
   /** Send a new Telegram message and track its ID */
@@ -202,6 +203,30 @@ export async function streamToTelegram(
     await safeEditMessage(ctx, chatId, messageId, text, toolLines.join("\n"))
   }
 
+  /** Update the thinking message with accumulated thinking text */
+  const flushThinking = async (final = false) => {
+    if (!thinkingText) return
+
+    const now = Date.now()
+    if (!final && now - lastEditTime < EDIT_INTERVAL_MS) {
+      pendingEdit = true
+      return
+    }
+    pendingEdit = false
+    lastEditTime = now
+
+    let display = thinkingText
+    if (display.length > MAX_MSG_LENGTH - 200) {
+      display = "..." + display.slice(display.length - (MAX_MSG_LENGTH - 200))
+    }
+    const escaped = escapeHtml(display)
+    const lines = escaped.split("\n")
+    const html = lines.length >= 4
+      ? `<blockquote expandable><i>${escaped}</i></blockquote>`
+      : `<i>${escaped}</i>`
+    await safeEditMessage(ctx, chatId, messageId, html, display)
+  }
+
   /** Switch to a new mode, finalizing the previous one */
   const switchMode = async (newMode: MessageMode) => {
     if (mode === "text" && accumulated) {
@@ -211,13 +236,18 @@ export async function streamToTelegram(
     if (mode === "tools") {
       await flushTools()
     }
+    if (mode === "thinking" && thinkingText) {
+      await flushThinking(true)
+    }
     mode = newMode
     accumulated = ""
     toolLines = []
+    thinkingText = ""
   }
 
   const editTimer = setInterval(async () => {
     if (pendingEdit && mode === "text") await flushText().catch(() => {})
+    if (pendingEdit && mode === "thinking") await flushThinking().catch(() => {})
   }, EDIT_INTERVAL_MS)
 
   const typingTimer = setInterval(() => {
@@ -245,11 +275,31 @@ export async function streamToTelegram(
       } else if (event.kind === "thinking_start") {
         await switchMode("thinking")
         await sendNew("<i>Thinking...</i>", "HTML")
+      } else if (event.kind === "thinking_delta") {
+        if (mode !== "thinking") {
+          await switchMode("thinking")
+          await sendNew("<i>Thinking...</i>", "HTML")
+        }
+        thinkingText += event.text
+        await flushThinking().catch(() => {})
       } else if (event.kind === "thinking_done") {
-        if (mode === "thinking") {
-          const secs = (event.durationMs / 1000).toFixed(1)
+        const secs = (event.durationMs / 1000).toFixed(1)
+        if (mode === "thinking" && thinkingText) {
+          let display = thinkingText
+          if (display.length > MAX_MSG_LENGTH - 200) {
+            display = "..." + display.slice(display.length - (MAX_MSG_LENGTH - 200))
+          }
+          const escaped = escapeHtml(display)
+          const lines = escaped.split("\n")
+          const content = lines.length >= 4
+            ? `<blockquote expandable><i>${escaped}</i></blockquote>`
+            : `<i>${escaped}</i>`
+          const footer = `\n<i>Thought for ${secs}s</i>`
+          await safeEditMessage(ctx, chatId, messageId, content + footer, display).catch(() => {})
+        } else if (mode === "thinking") {
           await safeEditMessage(ctx, chatId, messageId, `<i>Thought for ${secs}s</i>`).catch(() => {})
         }
+        thinkingText = ""
         mode = "none"
       } else if (event.kind === "result") {
         result.sessionId = event.sessionId
