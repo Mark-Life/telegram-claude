@@ -7,10 +7,14 @@ import { streamToTelegram } from "./telegram"
 import { transcribeAudio } from "./transcribe"
 import { listAllSessions, getSessionProject } from "./history"
 
+type QueuedMessage = { prompt: string; ctx: Context }
+
 type UserState = {
   activeProject: string
   sessions: Map<string, string>
   promptHistory: Map<number, string>
+  queue: QueuedMessage[]
+  queueStatusMessageId?: number
 }
 
 const userStates = new Map<number, UserState>()
@@ -41,7 +45,7 @@ function buildPromptWithReplyContext(ctx: Context, userText: string) {
 function getState(userId: number): UserState {
   let state = userStates.get(userId)
   if (!state) {
-    state = { activeProject: "", sessions: new Map(), promptHistory: new Map() }
+    state = { activeProject: "", sessions: new Map(), promptHistory: new Map(), queue: [] }
     userStates.set(userId, state)
   }
   return state
@@ -205,6 +209,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const state = getState(ctx.from!.id)
     const chatId = ctx.chat!.id
     state.activeProject = fullPath
+    state.queue = []
+    await cleanupQueueStatus(state, ctx)
     await ctx.answerCallbackQuery({ text: `Switched to ${displayName}` })
     const ghUrl = isGeneral ? null : getGitHubUrl(fullPath)
     const projectLabel = ghUrl
@@ -221,8 +227,14 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
   })
 
   bot.command("stop", async (ctx) => {
-    const stopped = stopClaude(ctx.from!.id)
-    await ctx.reply(stopped ? "Process stopped." : "No active process.", { reply_markup: mainKeyboard })
+    const userId = ctx.from!.id
+    const state = getState(userId)
+    const stopped = stopClaude(userId)
+    const hadQueue = state.queue.length > 0
+    state.queue = []
+    await cleanupQueueStatus(state, ctx)
+    const msg = stopped ? "Process stopped." + (hadQueue ? " Queue cleared." : "") : "No active process."
+    await ctx.reply(msg, { reply_markup: mainKeyboard })
   })
 
   bot.command("status", async (ctx) => {
@@ -234,8 +246,9 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const sessionCount = state.sessions.size
     const branch = state.activeProject && state.activeProject !== projectsDir ? getCurrentBranch(state.activeProject) : null
     const branchLine = branch ? `\nBranch: ${branch}` : ""
+    const queueLine = state.queue.length > 0 ? `\nQueued: ${state.queue.length}` : ""
 
-    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}`, { reply_markup: mainKeyboard })
+    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}${queueLine}`, { reply_markup: mainKeyboard })
   })
 
   bot.command("help", async (ctx) => {
@@ -307,6 +320,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       state.activeProject = projectsDir
     }
     state.sessions.delete(state.activeProject)
+    state.queue = []
+    await cleanupQueueStatus(state, ctx)
     await ctx.reply("Session cleared. Next message starts a fresh conversation.", { reply_markup: mainKeyboard })
   })
 
@@ -411,6 +426,23 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     handlePrompt(ctx, prompt).catch((e) => console.error("retry handlePrompt error:", e))
   })
 
+  bot.callbackQuery(/^force_send:(\d+)$/, async (ctx) => {
+    const userId = parseInt(ctx.match![1], 10)
+    const stopped = stopClaude(userId)
+    await ctx.answerCallbackQuery({
+      text: stopped ? "Stopping current task..." : "No active process",
+    })
+  })
+
+  bot.callbackQuery(/^clear_queue:(\d+)$/, async (ctx) => {
+    const userId = parseInt(ctx.match![1], 10)
+    const state = getState(userId)
+    const count = state.queue.length
+    state.queue = []
+    await cleanupQueueStatus(state, ctx)
+    await ctx.answerCallbackQuery({ text: count > 0 ? `Cleared ${count} queued message(s).` : "Queue is empty." })
+  })
+
   /** Send a prompt to Claude and stream the response */
   async function handlePrompt(ctx: Context, prompt: string) {
     const state = getState(ctx.from!.id)
@@ -420,23 +452,67 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       return
     }
 
-    const sessionId = state.sessions.get(state.activeProject)
-    const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
-    const branchName = state.activeProject !== projectsDir ? getCurrentBranch(state.activeProject) : null
-
-    const retryKeyboard = new InlineKeyboard().text("Retry", "retry:pending")
-    const events = runClaude(ctx.from!.id, prompt, state.activeProject, ctx.chat!.id, sessionId)
-    const result = await streamToTelegram(ctx, events, projectName, { replyMarkup: retryKeyboard, branchName })
-
-    if (result.sessionId) {
-      state.sessions.set(state.activeProject, result.sessionId)
+    const userId = ctx.from!.id
+    if (hasActiveProcess(userId)) {
+      state.queue.push({ prompt, ctx })
+      await sendOrUpdateQueueStatus(ctx, state)
+      return
     }
 
-    if (result.messageId) {
-      storePrompt(state, result.messageId, prompt)
-      await ctx.api.editMessageReplyMarkup(ctx.chat!.id, result.messageId, {
-        reply_markup: new InlineKeyboard().text("Retry", `retry:${result.messageId}`),
-      }).catch(() => {})
+    await runAndDrain(ctx, prompt, state, userId)
+  }
+
+  /** Run a Claude prompt and drain any queued messages afterward */
+  async function runAndDrain(ctx: Context, prompt: string, state: UserState, userId: number) {
+    let currentCtx = ctx
+    let currentPrompt = prompt
+    while (true) {
+      const sessionId = state.sessions.get(state.activeProject)
+      const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
+      const branchName = state.activeProject !== projectsDir ? getCurrentBranch(state.activeProject) : null
+      try {
+        const retryKeyboard = new InlineKeyboard().text("Retry", "retry:pending")
+        const events = runClaude(userId, currentPrompt, state.activeProject, currentCtx.chat!.id, sessionId)
+        const result = await streamToTelegram(currentCtx, events, projectName, { replyMarkup: retryKeyboard, branchName })
+        if (result.sessionId) {
+          state.sessions.set(state.activeProject, result.sessionId)
+        }
+        if (result.messageId) {
+          storePrompt(state, result.messageId, currentPrompt)
+          await currentCtx.api.editMessageReplyMarkup(currentCtx.chat!.id, result.messageId, {
+            reply_markup: new InlineKeyboard().text("Retry", `retry:${result.messageId}`),
+          }).catch(() => {})
+        }
+      } catch (e) {
+        console.error("runAndDrain error:", e)
+      }
+      if (state.queue.length === 0) break
+      const queued = state.queue.splice(0)
+      currentPrompt = queued.map((q) => q.prompt).join("\n\n---\n\n")
+      currentCtx = queued[queued.length - 1].ctx
+      await cleanupQueueStatus(state, currentCtx)
+    }
+  }
+
+  /** Send or update the "Message queued" status message with Force Send button */
+  async function sendOrUpdateQueueStatus(ctx: Context, state: UserState) {
+    const text = `Message queued (${state.queue.length} in queue)`
+    const keyboard = new InlineKeyboard()
+      .text("Force Send — stops current task", `force_send:${ctx.from!.id}`).row()
+      .text("Clear Queue", `clear_queue:${ctx.from!.id}`)
+    if (state.queueStatusMessageId) {
+      await ctx.api.editMessageText(ctx.chat!.id, state.queueStatusMessageId, text, { reply_markup: keyboard }).catch(() => {})
+    } else {
+      const msg = await ctx.reply(text, { reply_markup: keyboard })
+      state.queueStatusMessageId = msg.message_id
+    }
+  }
+
+  /** Delete the queue status message if it exists */
+  async function cleanupQueueStatus(state: UserState, ctx: Context) {
+    if (state.queueStatusMessageId) {
+      await ctx.api.deleteMessage(ctx.chat!.id, state.queueStatusMessageId).catch(() => {})
+      state.queueStatusMessageId = undefined
     }
   }
 
