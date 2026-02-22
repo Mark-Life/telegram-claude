@@ -324,6 +324,15 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     })
   })
 
+  bot.callbackQuery(/^clear_queue:(\d+)$/, async (ctx) => {
+    const userId = parseInt(ctx.match![1], 10)
+    const state = getState(userId)
+    const count = state.queue.length
+    state.queue = []
+    await cleanupQueueStatus(state, ctx)
+    await ctx.answerCallbackQuery({ text: count > 0 ? `Cleared ${count} queued message(s).` : "Queue is empty." })
+  })
+
   /** Send a prompt to Claude and stream the response */
   async function handlePrompt(ctx: Context, prompt: string) {
     const state = getState(ctx.from!.id)
@@ -370,7 +379,9 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
   /** Send or update the "Message queued" status message with Force Send button */
   async function sendOrUpdateQueueStatus(ctx: Context, state: UserState) {
     const text = `Message queued (${state.queue.length} in queue)`
-    const keyboard = new InlineKeyboard().text("Force Send — stops current task", `force_send:${ctx.from!.id}`)
+    const keyboard = new InlineKeyboard()
+      .text("Force Send — stops current task", `force_send:${ctx.from!.id}`).row()
+      .text("Clear Queue", `clear_queue:${ctx.from!.id}`)
     if (state.queueStatusMessageId) {
       await ctx.api.editMessageText(ctx.chat!.id, state.queueStatusMessageId, text, { reply_markup: keyboard }).catch(() => {})
     } else {
