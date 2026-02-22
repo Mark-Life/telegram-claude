@@ -363,6 +363,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     await ctx.answerCallbackQuery({ text: "Still processing..." })
   })
 
+  const pendingRetries = new Map<number, NodeJS.Timeout>()
+
   bot.callbackQuery(/^retry:(\d+)$/, async (ctx) => {
     const msgId = parseInt(ctx.match![1], 10)
     const state = getState(ctx.from!.id)
@@ -371,8 +373,42 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       await ctx.answerCallbackQuery({ text: "Prompt expired" })
       return
     }
+    const keyboard = new InlineKeyboard()
+      .text("Confirm Retry", `retry_confirm:${msgId}`)
+      .text("Cancel", `retry_cancel:${msgId}`)
+    await ctx.editMessageReplyMarkup({ reply_markup: keyboard }).catch(() => {})
+    await ctx.answerCallbackQuery()
+    const timeout = setTimeout(async () => {
+      pendingRetries.delete(msgId)
+      const original = new InlineKeyboard().text("Retry", `retry:${msgId}`)
+      await ctx.editMessageReplyMarkup({ reply_markup: original }).catch(() => {})
+    }, 10_000)
+    pendingRetries.set(msgId, timeout)
+  })
+
+  bot.callbackQuery(/^retry_confirm:(\d+)$/, async (ctx) => {
+    const msgId = parseInt(ctx.match![1], 10)
+    const timeout = pendingRetries.get(msgId)
+    if (timeout) clearTimeout(timeout)
+    pendingRetries.delete(msgId)
+    const state = getState(ctx.from!.id)
+    const prompt = state.promptHistory.get(msgId)
+    if (!prompt) {
+      await ctx.answerCallbackQuery({ text: "Prompt expired" })
+      return
+    }
     await ctx.answerCallbackQuery({ text: "Retrying..." })
     handlePrompt(ctx, prompt).catch((e) => console.error("retry handlePrompt error:", e))
+  })
+
+  bot.callbackQuery(/^retry_cancel:(\d+)$/, async (ctx) => {
+    const msgId = parseInt(ctx.match![1], 10)
+    const timeout = pendingRetries.get(msgId)
+    if (timeout) clearTimeout(timeout)
+    pendingRetries.delete(msgId)
+    const original = new InlineKeyboard().text("Retry", `retry:${msgId}`)
+    await ctx.editMessageReplyMarkup({ reply_markup: original }).catch(() => {})
+    await ctx.answerCallbackQuery({ text: "Cancelled" })
   })
 
   bot.callbackQuery(/^force_send:(\d+)$/, async (ctx) => {
@@ -440,6 +476,10 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       currentPrompt = next.prompt
       currentCtx = next.ctx
       if (state.queue.length === 0) await cleanupQueueStatus(state, currentCtx)
+      const remaining = state.queue.length
+      const queueInfo = remaining > 0 ? ` | ${remaining} more in queue` : ""
+      const preview = currentPrompt.length > 200 ? currentPrompt.slice(0, 200) + "..." : currentPrompt
+      await currentCtx.reply(`<b>▶ Processing queued message</b>${queueInfo}\n<pre>${escapeHtml(preview)}</pre>`, { parse_mode: "HTML" }).catch(() => {})
     }
   }
 
