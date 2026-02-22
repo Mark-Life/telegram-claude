@@ -132,7 +132,7 @@ type StreamResult = {
   messageId?: number
 }
 
-type StreamOptions = { replyMarkup?: InlineKeyboard }
+type StreamOptions = { replyMarkup?: InlineKeyboard; branchName?: string | null }
 
 type MessageMode = "text" | "tools" | "thinking" | "none"
 
@@ -141,7 +141,7 @@ export async function streamToTelegram(
   ctx: Context,
   events: AsyncGenerator<ClaudeEvent>,
   projectName: string,
-  options?: StreamOptions & { branchName?: string | null },
+  options?: StreamOptions,
 ): Promise<StreamResult> {
   const chatId = ctx.chat!.id
   const branchName = options?.branchName
@@ -204,6 +204,19 @@ export async function streamToTelegram(
     await safeEditMessage(ctx, chatId, messageId, text, toolLines.join("\n"))
   }
 
+  /** Render thinking text as HTML (expandable blockquote if 4+ lines) */
+  const renderThinkingHtml = (text: string) => {
+    let display = text
+    if (display.length > MAX_MSG_LENGTH - 200) {
+      display = "..." + display.slice(display.length - (MAX_MSG_LENGTH - 200))
+    }
+    const escaped = escapeHtml(display)
+    const html = escaped.split("\n").length >= 4
+      ? `<blockquote expandable><i>${escaped}</i></blockquote>`
+      : `<i>${escaped}</i>`
+    return { html, plainText: display }
+  }
+
   /** Update the thinking message with accumulated thinking text */
   const flushThinking = async (final = false) => {
     if (!thinkingText) return
@@ -216,16 +229,8 @@ export async function streamToTelegram(
     pendingEdit = false
     lastEditTime = now
 
-    let display = thinkingText
-    if (display.length > MAX_MSG_LENGTH - 200) {
-      display = "..." + display.slice(display.length - (MAX_MSG_LENGTH - 200))
-    }
-    const escaped = escapeHtml(display)
-    const lines = escaped.split("\n")
-    const html = lines.length >= 4
-      ? `<blockquote expandable><i>${escaped}</i></blockquote>`
-      : `<i>${escaped}</i>`
-    await safeEditMessage(ctx, chatId, messageId, html, display)
+    const { html, plainText } = renderThinkingHtml(thinkingText)
+    await safeEditMessage(ctx, chatId, messageId, html, plainText)
   }
 
   /** Switch to a new mode, finalizing the previous one */
@@ -286,17 +291,9 @@ export async function streamToTelegram(
       } else if (event.kind === "thinking_done") {
         const secs = (event.durationMs / 1000).toFixed(1)
         if (mode === "thinking" && thinkingText) {
-          let display = thinkingText
-          if (display.length > MAX_MSG_LENGTH - 200) {
-            display = "..." + display.slice(display.length - (MAX_MSG_LENGTH - 200))
-          }
-          const escaped = escapeHtml(display)
-          const lines = escaped.split("\n")
-          const content = lines.length >= 4
-            ? `<blockquote expandable><i>${escaped}</i></blockquote>`
-            : `<i>${escaped}</i>`
+          const { html, plainText } = renderThinkingHtml(thinkingText)
           const footer = `\n<i>Thought for ${secs}s</i>`
-          await safeEditMessage(ctx, chatId, messageId, content + footer, display).catch(() => {})
+          await safeEditMessage(ctx, chatId, messageId, html + footer, plainText).catch(() => {})
         } else if (mode === "thinking") {
           await safeEditMessage(ctx, chatId, messageId, `<i>Thought for ${secs}s</i>`).catch(() => {})
         }

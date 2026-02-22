@@ -1,11 +1,11 @@
 import { Bot, InlineKeyboard, Keyboard, type Context } from "grammy"
 import { readdirSync, statSync, mkdirSync, writeFileSync } from "fs"
-import { execSync } from "child_process"
 import { join, basename } from "path"
 import { runClaude, stopClaude, hasActiveProcess } from "./claude"
 import { streamToTelegram } from "./telegram"
 import { transcribeAudio } from "./transcribe"
 import { listAllSessions, getSessionProject } from "./history"
+import { getGitHubUrl, getCurrentBranch, listBranches, listOpenPRs } from "./git"
 
 type QueuedMessage = { prompt: string; ctx: Context }
 
@@ -32,11 +32,11 @@ const mainKeyboard = new Keyboard()
   .text("Stop").text("New").row()
   .resized().persistent()
 
-/** Extract reply-to-message text and prepend it as context */
-function buildPromptWithReplyContext(ctx: Context, userText: string) {
+/** Extract reply-to-message text and prepend it as context (skip bot's own messages) */
+function buildPromptWithReplyContext(ctx: Context, userText: string, botId?: number) {
   const replyText = ctx.message?.reply_to_message?.text
   if (!replyText) return userText
-  if (ctx.message?.reply_to_message?.from?.id === ctx.from?.id) return userText
+  if (botId && ctx.message?.reply_to_message?.from?.id === botId) return userText
   const truncated = replyText.length > 2000 ? replyText.slice(0, 2000) + "..." : replyText
   return `[Replying to: ${truncated}]\n\n${userText}`
 }
@@ -74,67 +74,6 @@ function listProjects(projectsDir: string) {
       .sort()
   } catch {
     return []
-  }
-}
-
-/** Get GitHub HTTPS URL for a project directory, or null if unavailable */
-function getGitHubUrl(projectPath: string) {
-  try {
-    const raw = execSync("git remote get-url origin", { cwd: projectPath, timeout: 3000 })
-      .toString()
-      .trim()
-    // SSH: git@github.com:user/repo.git -> https://github.com/user/repo
-    const sshMatch = raw.match(/^git@([^:]+):(.+?)(?:\.git)?$/)
-    if (sshMatch) return `https://${sshMatch[1]}/${sshMatch[2]}`
-    // HTTPS: strip trailing .git
-    try {
-      const url = new URL(raw)
-      url.pathname = url.pathname.replace(/\.git$/, "")
-      return url.toString()
-    } catch {
-      return null
-    }
-  } catch {
-    return null
-  }
-}
-
-/** Get the current git branch for a project directory, or null on error */
-function getCurrentBranch(projectPath: string) {
-  try {
-    const branch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: projectPath, timeout: 3000 })
-      .toString()
-      .trim()
-    return branch === "HEAD" ? "(detached)" : branch
-  } catch {
-    return null
-  }
-}
-
-/** List all local branch names for a project directory, or null on error */
-function listBranches(projectPath: string) {
-  try {
-    const output = execSync("git branch --format='%(refname:short)'", { cwd: projectPath, timeout: 3000 })
-      .toString()
-      .trim()
-    return output ? output.split("\n").map((b) => b.trim()) : []
-  } catch {
-    return null
-  }
-}
-
-/** List open PRs for a project directory via gh CLI, or null on error */
-function listOpenPRs(projectPath: string) {
-  try {
-    const output = execSync("gh pr list --state open --json number,title,headRefName,url --limit 10", {
-      cwd: projectPath,
-      timeout: 10000,
-    })
-      .toString()
-      .trim()
-    return JSON.parse(output) as { number: number; title: string; headRefName: string; url: string }[]
-  } catch {
-    return null
   }
 }
 
@@ -285,10 +224,20 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
     const branches = listBranches(state.activeProject)
     const projectName = basename(state.activeProject)
-    const others = (branches ?? []).filter((b) => b !== current).slice(0, 20)
+    const others = (branches ?? []).filter((b) => b !== current)
+    const visible = others.slice(0, 10)
+    const collapsed = others.slice(10)
     const lines = [`<b>${escapeHtml(projectName)}</b>`, `Current: <code>${escapeHtml(current)}</code>`]
-    if (others.length > 0) {
-      lines.push("", ...others.map((b) => `<code>${escapeHtml(b)}</code>`))
+    if (visible.length > 0) {
+      lines.push("", ...visible.map((b) => `<code>${escapeHtml(b)}</code>`))
+    }
+    if (collapsed.length > 0) {
+      const collapsedLines = collapsed.map((b) => `<code>${escapeHtml(b)}</code>`).join("\n")
+      lines.push(`\n<blockquote expandable>${collapsedLines}</blockquote>`)
+    }
+    // listBranches caps at 50; if we got exactly 50 others, there are likely more
+    if (others.length >= 49) {
+      lines.push(`<i>...showing most recent branches only</i>`)
     }
     await ctx.reply(lines.join("\n"), { parse_mode: "HTML", reply_markup: mainKeyboard })
   })
@@ -427,7 +376,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
   })
 
   bot.callbackQuery(/^force_send:(\d+)$/, async (ctx) => {
-    const userId = parseInt(ctx.match![1], 10)
+    const userId = ctx.from.id
     const stopped = stopClaude(userId)
     await ctx.answerCallbackQuery({
       text: stopped ? "Stopping current task..." : "No active process",
@@ -435,7 +384,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
   })
 
   bot.callbackQuery(/^clear_queue:(\d+)$/, async (ctx) => {
-    const userId = parseInt(ctx.match![1], 10)
+    const userId = ctx.from.id
     const state = getState(userId)
     const count = state.queue.length
     state.queue = []
@@ -487,10 +436,10 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
         console.error("runAndDrain error:", e)
       }
       if (state.queue.length === 0) break
-      const queued = state.queue.splice(0)
-      currentPrompt = queued.map((q) => q.prompt).join("\n\n---\n\n")
-      currentCtx = queued[queued.length - 1].ctx
-      await cleanupQueueStatus(state, currentCtx)
+      const next = state.queue.shift()!
+      currentPrompt = next.prompt
+      currentCtx = next.ctx
+      if (state.queue.length === 0) await cleanupQueueStatus(state, currentCtx)
     }
   }
 
@@ -517,7 +466,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
   }
 
   bot.on("message:text", (ctx) => {
-    const prompt = buildPromptWithReplyContext(ctx, ctx.message.text)
+    const prompt = buildPromptWithReplyContext(ctx, ctx.message.text, botId)
     handlePrompt(ctx, prompt).catch((e) => console.error("handlePrompt error:", e))
   })
 
@@ -551,7 +500,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       return
     }
 
-    const fullPrompt = buildPromptWithReplyContext(ctx, prompt)
+    const fullPrompt = buildPromptWithReplyContext(ctx, prompt, botId)
     handlePrompt(ctx, fullPrompt).catch((e) => console.error("handlePrompt error:", e))
   })
 
@@ -585,7 +534,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
       const caption = ctx.message.caption ?? "See the attached file."
       const prompt = `${caption}\n\n[File: ${filename} saved at ${dest}]`
-      const fullPrompt = buildPromptWithReplyContext(ctx, prompt)
+      const fullPrompt = buildPromptWithReplyContext(ctx, prompt, botId)
       handlePrompt(ctx, fullPrompt).catch((e) => console.error("handlePrompt error:", e))
     } catch (e) {
       console.error("Document upload error:", e)
@@ -604,7 +553,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
       const caption = ctx.message.caption ?? "See the attached photo."
       const prompt = `${caption}\n\n[Photo saved at ${dest}]`
-      const fullPrompt = buildPromptWithReplyContext(ctx, prompt)
+      const fullPrompt = buildPromptWithReplyContext(ctx, prompt, botId)
       handlePrompt(ctx, fullPrompt).catch((e) => console.error("handlePrompt error:", e))
     } catch (e) {
       console.error("Photo upload error:", e)
