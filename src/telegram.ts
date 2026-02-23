@@ -1,4 +1,4 @@
-import type { Context, InlineKeyboard } from "grammy"
+import type { Context } from "grammy"
 import { Marked } from "marked"
 import type { ClaudeEvent } from "./claude"
 
@@ -103,19 +103,15 @@ function markdownToTelegramHtml(md: string) {
 }
 
 /** Try editing with HTML, fall back to plain text. Returns true if HTML succeeded. */
-async function safeEditMessage(ctx: Context, chatId: number, messageId: number, text: string, rawText?: string, replyMarkup?: InlineKeyboard) {
+async function safeEditMessage(ctx: Context, chatId: number, messageId: number, text: string, rawText?: string) {
   const displayText = text || "..."
   try {
-    const opts: Record<string, unknown> = { parse_mode: "HTML" }
-    if (replyMarkup) opts.reply_markup = replyMarkup
-    await ctx.api.editMessageText(chatId, messageId, displayText, opts)
+    await ctx.api.editMessageText(chatId, messageId, displayText, { parse_mode: "HTML" })
     return true
   } catch (err: any) {
     if (err?.description?.includes("message is not modified") || err?.description?.includes("message can't be edited")) return true
     try {
-      const opts: Record<string, unknown> = {}
-      if (replyMarkup) opts.reply_markup = replyMarkup
-      await ctx.api.editMessageText(chatId, messageId, rawText ?? displayText, opts)
+      await ctx.api.editMessageText(chatId, messageId, rawText ?? displayText)
       return false
     } catch (err2: any) {
       if (!err2?.description?.includes("message is not modified") && !err2?.description?.includes("message can't be edited")) throw err2
@@ -132,7 +128,7 @@ type StreamResult = {
   messageId?: number
 }
 
-type StreamOptions = { replyMarkup?: InlineKeyboard; branchName?: string | null }
+type StreamOptions = { branchName?: string | null }
 
 type MessageMode = "text" | "tools" | "thinking" | "none"
 
@@ -328,7 +324,7 @@ export async function streamToTelegram(
     const html = markdownToTelegramHtml(accumulated)
     const footer = formatFooter(projectName, result, branchName)
     const display = footer ? `${html}\n\n${footer}` : html
-    const ok = await safeEditMessage(ctx, chatId, lastTextMessageId, display || "...", undefined, options?.replyMarkup).catch(() => false)
+    const ok = await safeEditMessage(ctx, chatId, lastTextMessageId, display || "...").catch(() => false)
     if (!ok && footer) {
       // HTML with footer failed — keep existing styled message, send footer separately
       await ctx.api.sendMessage(chatId, footer, { parse_mode: "HTML" }).catch(() => {})

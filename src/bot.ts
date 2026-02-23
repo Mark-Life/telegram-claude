@@ -12,14 +12,12 @@ type QueuedMessage = { prompt: string; ctx: Context }
 type UserState = {
   activeProject: string
   sessions: Map<string, string>
-  promptHistory: Map<number, string>
   queue: QueuedMessage[]
   queueStatusMessageId?: number
 }
 
 const userStates = new Map<number, UserState>()
 const HISTORY_PAGE_SIZE = 5
-const MAX_PROMPT_HISTORY = 50
 
 /** Escape HTML special characters for Telegram */
 function escapeHtml(text: string) {
@@ -45,19 +43,10 @@ function buildPromptWithReplyContext(ctx: Context, userText: string, botId?: num
 function getState(userId: number): UserState {
   let state = userStates.get(userId)
   if (!state) {
-    state = { activeProject: "", sessions: new Map(), promptHistory: new Map(), queue: [] }
+    state = { activeProject: "", sessions: new Map(), queue: [] }
     userStates.set(userId, state)
   }
   return state
-}
-
-/** Store a prompt keyed by bot response message ID, evicting oldest when over limit */
-function storePrompt(state: UserState, messageId: number, prompt: string) {
-  state.promptHistory.set(messageId, prompt)
-  if (state.promptHistory.size > MAX_PROMPT_HISTORY) {
-    const oldest = state.promptHistory.keys().next().value!
-    state.promptHistory.delete(oldest)
-  }
 }
 
 /** List project directories */
@@ -359,58 +348,6 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
   })
 
-  bot.callbackQuery("retry:pending", async (ctx) => {
-    await ctx.answerCallbackQuery({ text: "Still processing..." })
-  })
-
-  const pendingRetries = new Map<number, NodeJS.Timeout>()
-
-  bot.callbackQuery(/^retry:(\d+)$/, async (ctx) => {
-    const msgId = parseInt(ctx.match![1], 10)
-    const state = getState(ctx.from!.id)
-    const prompt = state.promptHistory.get(msgId)
-    if (!prompt) {
-      await ctx.answerCallbackQuery({ text: "Prompt expired" })
-      return
-    }
-    const keyboard = new InlineKeyboard()
-      .text("Confirm Retry", `retry_confirm:${msgId}`)
-      .text("Cancel", `retry_cancel:${msgId}`)
-    await ctx.editMessageReplyMarkup({ reply_markup: keyboard }).catch(() => {})
-    await ctx.answerCallbackQuery()
-    const timeout = setTimeout(async () => {
-      pendingRetries.delete(msgId)
-      const original = new InlineKeyboard().text("Retry", `retry:${msgId}`)
-      await ctx.editMessageReplyMarkup({ reply_markup: original }).catch(() => {})
-    }, 10_000)
-    pendingRetries.set(msgId, timeout)
-  })
-
-  bot.callbackQuery(/^retry_confirm:(\d+)$/, async (ctx) => {
-    const msgId = parseInt(ctx.match![1], 10)
-    const timeout = pendingRetries.get(msgId)
-    if (timeout) clearTimeout(timeout)
-    pendingRetries.delete(msgId)
-    const state = getState(ctx.from!.id)
-    const prompt = state.promptHistory.get(msgId)
-    if (!prompt) {
-      await ctx.answerCallbackQuery({ text: "Prompt expired" })
-      return
-    }
-    await ctx.answerCallbackQuery({ text: "Retrying..." })
-    handlePrompt(ctx, prompt).catch((e) => console.error("retry handlePrompt error:", e))
-  })
-
-  bot.callbackQuery(/^retry_cancel:(\d+)$/, async (ctx) => {
-    const msgId = parseInt(ctx.match![1], 10)
-    const timeout = pendingRetries.get(msgId)
-    if (timeout) clearTimeout(timeout)
-    pendingRetries.delete(msgId)
-    const original = new InlineKeyboard().text("Retry", `retry:${msgId}`)
-    await ctx.editMessageReplyMarkup({ reply_markup: original }).catch(() => {})
-    await ctx.answerCallbackQuery({ text: "Cancelled" })
-  })
-
   bot.callbackQuery(/^force_send:(\d+)$/, async (ctx) => {
     const userId = ctx.from.id
     const stopped = stopClaude(userId)
@@ -456,17 +393,10 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
       const branchName = state.activeProject !== projectsDir ? getCurrentBranch(state.activeProject) : null
       try {
-        const retryKeyboard = new InlineKeyboard().text("Retry", "retry:pending")
         const events = runClaude(userId, currentPrompt, state.activeProject, currentCtx.chat!.id, sessionId)
-        const result = await streamToTelegram(currentCtx, events, projectName, { replyMarkup: retryKeyboard, branchName })
+        const result = await streamToTelegram(currentCtx, events, projectName, { branchName })
         if (result.sessionId) {
           state.sessions.set(state.activeProject, result.sessionId)
-        }
-        if (result.messageId) {
-          storePrompt(state, result.messageId, currentPrompt)
-          await currentCtx.api.editMessageReplyMarkup(currentCtx.chat!.id, result.messageId, {
-            reply_markup: new InlineKeyboard().text("Retry", `retry:${result.messageId}`),
-          }).catch(() => {})
         }
       } catch (e) {
         console.error("runAndDrain error:", e)
