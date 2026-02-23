@@ -53,6 +53,8 @@ bot.start({
       { command: "new", description: "Start fresh conversation" },
       { command: "stop", description: "Kill active process" },
       { command: "status", description: "Show current state" },
+      { command: "branch", description: "Show current git branch" },
+      { command: "pr", description: "List open pull requests" },
       { command: "help", description: "Show available commands" },
     ]
     const scopes = [
@@ -64,5 +66,7 @@ bot.start({
     Promise.all(
       scopes.map((scope) => bot.api.setMyCommands(commands, { scope })),
     ).catch((e) => console.error("Failed to set bot commands:", e))
+    bot.api.sendMessage(userId, `Bot started at ${new Date().toLocaleString()}`)
+      .catch((e) => console.error("Failed to send startup message:", e))
   },
 })

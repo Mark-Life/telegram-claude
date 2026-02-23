@@ -125,7 +125,10 @@ type StreamResult = {
   cost?: number
   durationMs?: number
   turns?: number
+  messageId?: number
 }
+
+type StreamOptions = { branchName?: string | null }
 
 type MessageMode = "text" | "tools" | "thinking" | "none"
 
@@ -134,8 +137,10 @@ export async function streamToTelegram(
   ctx: Context,
   events: AsyncGenerator<ClaudeEvent>,
   projectName: string,
+  options?: StreamOptions,
 ): Promise<StreamResult> {
   const chatId = ctx.chat!.id
+  const branchName = options?.branchName
   const result: StreamResult = {}
 
   let mode: MessageMode = "none"
@@ -144,6 +149,7 @@ export async function streamToTelegram(
   let lastEditTime = 0
   let pendingEdit = false
   let toolLines: string[] = []
+  let thinkingText = ""
   let lastTextMessageId = 0
 
   /** Send a new Telegram message and track its ID */
@@ -194,6 +200,35 @@ export async function streamToTelegram(
     await safeEditMessage(ctx, chatId, messageId, text, toolLines.join("\n"))
   }
 
+  /** Render thinking text as HTML (expandable blockquote if 4+ lines) */
+  const renderThinkingHtml = (text: string) => {
+    let display = text
+    if (display.length > MAX_MSG_LENGTH - 200) {
+      display = "..." + display.slice(display.length - (MAX_MSG_LENGTH - 200))
+    }
+    const escaped = escapeHtml(display)
+    const html = escaped.split("\n").length >= 4
+      ? `<blockquote expandable><i>${escaped}</i></blockquote>`
+      : `<i>${escaped}</i>`
+    return { html, plainText: display }
+  }
+
+  /** Update the thinking message with accumulated thinking text */
+  const flushThinking = async (final = false) => {
+    if (!thinkingText) return
+
+    const now = Date.now()
+    if (!final && now - lastEditTime < EDIT_INTERVAL_MS) {
+      pendingEdit = true
+      return
+    }
+    pendingEdit = false
+    lastEditTime = now
+
+    const { html, plainText } = renderThinkingHtml(thinkingText)
+    await safeEditMessage(ctx, chatId, messageId, html, plainText)
+  }
+
   /** Switch to a new mode, finalizing the previous one */
   const switchMode = async (newMode: MessageMode) => {
     if (mode === "text" && accumulated) {
@@ -203,13 +238,18 @@ export async function streamToTelegram(
     if (mode === "tools") {
       await flushTools()
     }
+    if (mode === "thinking" && thinkingText) {
+      await flushThinking(true)
+    }
     mode = newMode
     accumulated = ""
     toolLines = []
+    thinkingText = ""
   }
 
   const editTimer = setInterval(async () => {
     if (pendingEdit && mode === "text") await flushText().catch(() => {})
+    if (pendingEdit && mode === "thinking") await flushThinking().catch(() => {})
   }, EDIT_INTERVAL_MS)
 
   const typingTimer = setInterval(() => {
@@ -237,11 +277,18 @@ export async function streamToTelegram(
       } else if (event.kind === "thinking_start") {
         await switchMode("thinking")
         await sendNew("<i>Thinking...</i>", "HTML")
-      } else if (event.kind === "thinking_done") {
-        if (mode === "thinking") {
-          const secs = (event.durationMs / 1000).toFixed(1)
-          await safeEditMessage(ctx, chatId, messageId, `<i>Thought for ${secs}s</i>`).catch(() => {})
+      } else if (event.kind === "thinking_delta") {
+        if (mode !== "thinking") {
+          await switchMode("thinking")
+          await sendNew("<i>Thinking...</i>", "HTML")
         }
+        thinkingText += event.text
+        await flushThinking().catch(() => {})
+      } else if (event.kind === "thinking_done") {
+        if (mode === "thinking" && thinkingText) {
+          await flushThinking(true)
+        }
+        thinkingText = ""
         mode = "none"
       } else if (event.kind === "result") {
         result.sessionId = event.sessionId
@@ -275,7 +322,7 @@ export async function streamToTelegram(
 
   if (lastTextMessageId && accumulated) {
     const html = markdownToTelegramHtml(accumulated)
-    const footer = formatFooter(projectName, result)
+    const footer = formatFooter(projectName, result, branchName)
     const display = footer ? `${html}\n\n${footer}` : html
     const ok = await safeEditMessage(ctx, chatId, lastTextMessageId, display || "...").catch(() => false)
     if (!ok && footer) {
@@ -284,17 +331,19 @@ export async function streamToTelegram(
     }
   } else if (!lastTextMessageId && (result.cost !== undefined || result.durationMs !== undefined)) {
     // No text message was sent -- send footer as standalone
-    const footer = formatFooter(projectName, result)
+    const footer = formatFooter(projectName, result, branchName)
     if (footer) await ctx.api.sendMessage(chatId, footer, { parse_mode: "HTML" }).catch(() => {})
   }
+
+  result.messageId = lastTextMessageId || undefined
 
   return result
 }
 
 /** Format metadata footer as HTML */
-function formatFooter(projectName: string, result: StreamResult) {
+function formatFooter(projectName: string, result: StreamResult, branchName?: string | null) {
   const meta: string[] = []
-  if (projectName) meta.push(`Project: ${escapeHtml(projectName)}`)
+  if (projectName) meta.push(`Project: ${branchName ? `${escapeHtml(projectName)} [${escapeHtml(branchName)}]` : escapeHtml(projectName)}`)
   if (result.cost !== undefined) meta.push(`Cost: $${result.cost.toFixed(4)}`)
   if (result.durationMs !== undefined) {
     const secs = (result.durationMs / 1000).toFixed(1)
@@ -302,17 +351,4 @@ function formatFooter(projectName: string, result: StreamResult) {
   }
   if (result.turns !== undefined && result.turns > 1) meta.push(`Turns: ${result.turns}`)
   return meta.length > 0 ? `<i>${meta.join(" | ")}</i>` : ""
-}
-
-/** Format metadata footer as plain text */
-function formatFooterPlain(projectName: string, result: StreamResult) {
-  const meta: string[] = []
-  if (projectName) meta.push(`Project: ${projectName}`)
-  if (result.cost !== undefined) meta.push(`Cost: $${result.cost.toFixed(4)}`)
-  if (result.durationMs !== undefined) {
-    const secs = (result.durationMs / 1000).toFixed(1)
-    meta.push(`Time: ${secs}s`)
-  }
-  if (result.turns !== undefined && result.turns > 1) meta.push(`Turns: ${result.turns}`)
-  return meta.join(" | ")
 }

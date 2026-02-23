@@ -1,16 +1,19 @@
 import { Bot, InlineKeyboard, Keyboard, type Context } from "grammy"
 import { readdirSync, statSync, mkdirSync, writeFileSync } from "fs"
-import { execSync } from "child_process"
 import { join, basename } from "path"
 import { runClaude, stopClaude, hasActiveProcess } from "./claude"
 import { streamToTelegram } from "./telegram"
 import { transcribeAudio } from "./transcribe"
 import { listAllSessions, getSessionProject } from "./history"
+import { getGitHubUrl, getCurrentBranch, listBranches, listOpenPRs } from "./git"
+
+type QueuedMessage = { prompt: string; ctx: Context }
 
 type UserState = {
   activeProject: string
   sessions: Map<string, string>
-  pinnedMessageId?: number
+  queue: QueuedMessage[]
+  queueStatusMessageId?: number
 }
 
 const userStates = new Map<number, UserState>()
@@ -27,10 +30,11 @@ const mainKeyboard = new Keyboard()
   .text("Stop").text("New").row()
   .resized().persistent()
 
-/** Extract reply-to-message text and prepend it as context */
-function buildPromptWithReplyContext(ctx: Context, userText: string) {
+/** Extract reply-to-message text and prepend it as context (skip bot's own messages) */
+function buildPromptWithReplyContext(ctx: Context, userText: string, botId?: number) {
   const replyText = ctx.message?.reply_to_message?.text
   if (!replyText) return userText
+  if (botId && ctx.message?.reply_to_message?.from?.id === botId) return userText
   const truncated = replyText.length > 2000 ? replyText.slice(0, 2000) + "..." : replyText
   return `[Replying to: ${truncated}]\n\n${userText}`
 }
@@ -39,7 +43,7 @@ function buildPromptWithReplyContext(ctx: Context, userText: string) {
 function getState(userId: number): UserState {
   let state = userStates.get(userId)
   if (!state) {
-    state = { activeProject: "", sessions: new Map() }
+    state = { activeProject: "", sessions: new Map(), queue: [] }
     userStates.set(userId, state)
   }
   return state
@@ -59,28 +63,6 @@ function listProjects(projectsDir: string) {
       .sort()
   } catch {
     return []
-  }
-}
-
-/** Get GitHub HTTPS URL for a project directory, or null if unavailable */
-function getGitHubUrl(projectPath: string) {
-  try {
-    const raw = execSync("git remote get-url origin", { cwd: projectPath, timeout: 3000 })
-      .toString()
-      .trim()
-    // SSH: git@github.com:user/repo.git -> https://github.com/user/repo
-    const sshMatch = raw.match(/^git@([^:]+):(.+?)(?:\.git)?$/)
-    if (sshMatch) return `https://${sshMatch[1]}/${sshMatch[2]}`
-    // HTTPS: strip trailing .git
-    try {
-      const url = new URL(raw)
-      url.pathname = url.pathname.replace(/\.git$/, "")
-      return url.toString()
-    } catch {
-      return null
-    }
-  } catch {
-    return null
   }
 }
 
@@ -155,25 +137,32 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const state = getState(ctx.from!.id)
     const chatId = ctx.chat!.id
     state.activeProject = fullPath
+    state.queue = []
+    await cleanupQueueStatus(state, ctx)
     await ctx.answerCallbackQuery({ text: `Switched to ${displayName}` })
     const ghUrl = isGeneral ? null : getGitHubUrl(fullPath)
     const projectLabel = ghUrl
       ? `<a href="${escapeHtml(ghUrl)}">${escapeHtml(displayName)}</a>`
       : escapeHtml(displayName)
-    const msg = await ctx.editMessageText(`Active project: ${projectLabel}`, { parse_mode: "HTML" })
-    if (state.pinnedMessageId) {
-      await ctx.api.unpinChatMessage(chatId, state.pinnedMessageId).catch(() => {})
-    }
+    const branch = isGeneral ? null : getCurrentBranch(fullPath)
+    const branchSuffix = branch ? ` [${escapeHtml(branch)}]` : ""
+    const msg = await ctx.editMessageText(`Active project: ${projectLabel}${branchSuffix}`, { parse_mode: "HTML" })
+    await ctx.api.unpinAllChatMessages(chatId).catch(() => {})
     const pinnedId = typeof msg === "object" && "message_id" in msg ? msg.message_id : undefined
     if (pinnedId) {
       await ctx.api.pinChatMessage(chatId, pinnedId, { disable_notification: true }).catch(() => {})
-      state.pinnedMessageId = pinnedId
     }
   })
 
   bot.command("stop", async (ctx) => {
-    const stopped = stopClaude(ctx.from!.id)
-    await ctx.reply(stopped ? "Process stopped." : "No active process.", { reply_markup: mainKeyboard })
+    const userId = ctx.from!.id
+    const state = getState(userId)
+    const stopped = stopClaude(userId)
+    const hadQueue = state.queue.length > 0
+    state.queue = []
+    await cleanupQueueStatus(state, ctx)
+    const msg = stopped ? "Process stopped." + (hadQueue ? " Queue cleared." : "") : "No active process."
+    await ctx.reply(msg, { reply_markup: mainKeyboard })
   })
 
   bot.command("status", async (ctx) => {
@@ -183,8 +172,11 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       : "(none)"
     const running = hasActiveProcess(ctx.from!.id) ? "Yes" : "No"
     const sessionCount = state.sessions.size
+    const branch = state.activeProject && state.activeProject !== projectsDir ? getCurrentBranch(state.activeProject) : null
+    const branchLine = branch ? `\nBranch: ${branch}` : ""
+    const queueLine = state.queue.length > 0 ? `\nQueued: ${state.queue.length}` : ""
 
-    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}`, { reply_markup: mainKeyboard })
+    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}${queueLine}`, { reply_markup: mainKeyboard })
   })
 
   bot.command("help", async (ctx) => {
@@ -196,6 +188,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
         "/new — start fresh conversation",
         "/stop — kill active process",
         "/status — show current state",
+        "/branch — show current git branch",
+        "/pr — list open pull requests",
         "/help — show this message",
         "",
         "Send any text or voice message to chat with Claude in the active project.",
@@ -204,12 +198,68 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     )
   })
 
+  bot.command("branch", async (ctx) => {
+    const state = getState(ctx.from!.id)
+    if (!state.activeProject || state.activeProject === projectsDir) {
+      await ctx.reply("No project selected or in general mode.", { reply_markup: mainKeyboard })
+      return
+    }
+
+    const current = getCurrentBranch(state.activeProject)
+    if (!current) {
+      await ctx.reply("Not a git repository.", { reply_markup: mainKeyboard })
+      return
+    }
+
+    const branches = listBranches(state.activeProject)
+    const projectName = basename(state.activeProject)
+    const others = (branches ?? []).filter((b) => b !== current)
+    const visible = others.slice(0, 10)
+    const collapsed = others.slice(10)
+    const lines = [`<b>${escapeHtml(projectName)}</b>`, `Current: <code>${escapeHtml(current)}</code>`]
+    if (visible.length > 0) {
+      lines.push("", ...visible.map((b) => `<code>${escapeHtml(b)}</code>`))
+    }
+    if (collapsed.length > 0) {
+      const collapsedLines = collapsed.map((b) => `<code>${escapeHtml(b)}</code>`).join("\n")
+      lines.push(`\n<blockquote expandable>${collapsedLines}</blockquote>`)
+    }
+    // listBranches caps at 50; if we got exactly 50 others, there are likely more
+    if (others.length >= 49) {
+      lines.push(`<i>...showing most recent branches only</i>`)
+    }
+    await ctx.reply(lines.join("\n"), { parse_mode: "HTML", reply_markup: mainKeyboard })
+  })
+
+  bot.command("pr", async (ctx) => {
+    const state = getState(ctx.from!.id)
+    if (!state.activeProject || state.activeProject === projectsDir) {
+      await ctx.reply("No project selected or in general mode.", { reply_markup: mainKeyboard })
+      return
+    }
+
+    const prs = listOpenPRs(state.activeProject)
+    if (prs === null) {
+      await ctx.reply("Could not fetch PRs. Is gh CLI authenticated?", { reply_markup: mainKeyboard })
+      return
+    }
+    if (prs.length === 0) {
+      await ctx.reply("No open PRs.", { reply_markup: mainKeyboard })
+      return
+    }
+
+    const lines = prs.map((pr) => `#${pr.number} <a href="${escapeHtml(pr.url)}">${escapeHtml(pr.title)}</a> (<code>${escapeHtml(pr.headRefName)}</code>)`)
+    await ctx.reply(lines.join("\n"), { parse_mode: "HTML", reply_markup: mainKeyboard })
+  })
+
   bot.command("new", async (ctx) => {
     const state = getState(ctx.from!.id)
     if (!state.activeProject) {
       state.activeProject = projectsDir
     }
     state.sessions.delete(state.activeProject)
+    state.queue = []
+    await cleanupQueueStatus(state, ctx)
     await ctx.reply("Session cleared. Next message starts a fresh conversation.", { reply_markup: mainKeyboard })
   })
 
@@ -291,14 +341,28 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const projectName = basename(state.activeProject)
     await ctx.answerCallbackQuery({ text: "Session resumed" })
     const msg = await ctx.editMessageText(`Resumed session in <b>${escapeHtml(projectName)}</b>. Next message continues this conversation.`, { parse_mode: "HTML" })
-    if (state.pinnedMessageId) {
-      await ctx.api.unpinChatMessage(chatId, state.pinnedMessageId).catch(() => {})
-    }
+    await ctx.api.unpinAllChatMessages(chatId).catch(() => {})
     const pinnedId = typeof msg === "object" && "message_id" in msg ? msg.message_id : undefined
     if (pinnedId) {
       await ctx.api.pinChatMessage(chatId, pinnedId, { disable_notification: true }).catch(() => {})
-      state.pinnedMessageId = pinnedId
     }
+  })
+
+  bot.callbackQuery(/^force_send:(\d+)$/, async (ctx) => {
+    const userId = ctx.from.id
+    const stopped = stopClaude(userId)
+    await ctx.answerCallbackQuery({
+      text: stopped ? "Stopping current task..." : "No active process",
+    })
+  })
+
+  bot.callbackQuery(/^clear_queue:(\d+)$/, async (ctx) => {
+    const userId = ctx.from.id
+    const state = getState(userId)
+    const count = state.queue.length
+    state.queue = []
+    await cleanupQueueStatus(state, ctx)
+    await ctx.answerCallbackQuery({ text: count > 0 ? `Cleared ${count} queued message(s).` : "Queue is empty." })
   })
 
   /** Send a prompt to Claude and stream the response */
@@ -310,19 +374,69 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       return
     }
 
-    const sessionId = state.sessions.get(state.activeProject)
-    const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
+    const userId = ctx.from!.id
+    if (hasActiveProcess(userId)) {
+      state.queue.push({ prompt, ctx })
+      await sendOrUpdateQueueStatus(ctx, state)
+      return
+    }
 
-    const events = runClaude(ctx.from!.id, prompt, state.activeProject, ctx.chat!.id, sessionId)
-    const result = await streamToTelegram(ctx, events, projectName)
+    await runAndDrain(ctx, prompt, state, userId)
+  }
 
-    if (result.sessionId) {
-      state.sessions.set(state.activeProject, result.sessionId)
+  /** Run a Claude prompt and drain any queued messages afterward */
+  async function runAndDrain(ctx: Context, prompt: string, state: UserState, userId: number) {
+    let currentCtx = ctx
+    let currentPrompt = prompt
+    while (true) {
+      const sessionId = state.sessions.get(state.activeProject)
+      const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
+      const branchName = state.activeProject !== projectsDir ? getCurrentBranch(state.activeProject) : null
+      try {
+        const events = runClaude(userId, currentPrompt, state.activeProject, currentCtx.chat!.id, sessionId)
+        const result = await streamToTelegram(currentCtx, events, projectName, { branchName })
+        if (result.sessionId) {
+          state.sessions.set(state.activeProject, result.sessionId)
+        }
+      } catch (e) {
+        console.error("runAndDrain error:", e)
+      }
+      if (state.queue.length === 0) break
+      const next = state.queue.shift()!
+      currentPrompt = next.prompt
+      currentCtx = next.ctx
+      if (state.queue.length === 0) await cleanupQueueStatus(state, currentCtx)
+      const remaining = state.queue.length
+      const queueInfo = remaining > 0 ? ` | ${remaining} more in queue` : ""
+      const preview = currentPrompt.length > 200 ? currentPrompt.slice(0, 200) + "..." : currentPrompt
+      await currentCtx.reply(`<b>▶ Processing queued message</b>${queueInfo}\n<pre>${escapeHtml(preview)}</pre>`, { parse_mode: "HTML" }).catch(() => {})
+    }
+  }
+
+  /** Send or update the "Message queued" status message with Force Send button */
+  async function sendOrUpdateQueueStatus(ctx: Context, state: UserState) {
+    const text = `Message queued (${state.queue.length} in queue)`
+    const keyboard = new InlineKeyboard()
+      .text("Force Send — stops current task", `force_send:${ctx.from!.id}`).row()
+      .text("Clear Queue", `clear_queue:${ctx.from!.id}`)
+    if (state.queueStatusMessageId) {
+      await ctx.api.editMessageText(ctx.chat!.id, state.queueStatusMessageId, text, { reply_markup: keyboard }).catch(() => {})
+    } else {
+      const msg = await ctx.reply(text, { reply_markup: keyboard })
+      state.queueStatusMessageId = msg.message_id
+    }
+  }
+
+  /** Delete the queue status message if it exists */
+  async function cleanupQueueStatus(state: UserState, ctx: Context) {
+    if (state.queueStatusMessageId) {
+      await ctx.api.deleteMessage(ctx.chat!.id, state.queueStatusMessageId).catch(() => {})
+      state.queueStatusMessageId = undefined
     }
   }
 
   bot.on("message:text", (ctx) => {
-    const prompt = buildPromptWithReplyContext(ctx, ctx.message.text)
+    const prompt = buildPromptWithReplyContext(ctx, ctx.message.text, botId)
     handlePrompt(ctx, prompt).catch((e) => console.error("handlePrompt error:", e))
   })
 
@@ -356,19 +470,19 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       return
     }
 
-    const fullPrompt = buildPromptWithReplyContext(ctx, prompt)
+    const fullPrompt = buildPromptWithReplyContext(ctx, prompt, botId)
     handlePrompt(ctx, fullPrompt).catch((e) => console.error("handlePrompt error:", e))
   })
 
   /** Download a Telegram file and save to project's user-sent-files dir */
-  async function saveUploadedFile(ctx: Context, filename: string) {
+  async function saveUploadedFile(ctx: Context, filename: string, fileId?: string) {
     const state = getState(ctx.from!.id)
     if (!state.activeProject) {
       await ctx.reply("No project selected. Use /projects to pick one.", { reply_markup: mainKeyboard })
       return null
     }
 
-    const file = await ctx.getFile()
+    const file = fileId ? await ctx.api.getFile(fileId) : await ctx.getFile()
     const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`
     const res = await fetch(url)
     const buffer = Buffer.from(await res.arrayBuffer())
@@ -390,7 +504,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
       const caption = ctx.message.caption ?? "See the attached file."
       const prompt = `${caption}\n\n[File: ${filename} saved at ${dest}]`
-      const fullPrompt = buildPromptWithReplyContext(ctx, prompt)
+      const fullPrompt = buildPromptWithReplyContext(ctx, prompt, botId)
       handlePrompt(ctx, fullPrompt).catch((e) => console.error("handlePrompt error:", e))
     } catch (e) {
       console.error("Document upload error:", e)
@@ -404,16 +518,12 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const filename = `photo_${Date.now()}.jpg`
 
     try {
-      // Override ctx.getFile to use the largest photo's file_id
-      const origGetFile = ctx.getFile.bind(ctx)
-      ctx.getFile = () => ctx.api.getFile(largest.file_id) as ReturnType<typeof origGetFile>
-
-      const dest = await saveUploadedFile(ctx, filename)
+      const dest = await saveUploadedFile(ctx, filename, largest.file_id)
       if (!dest) return
 
       const caption = ctx.message.caption ?? "See the attached photo."
       const prompt = `${caption}\n\n[Photo saved at ${dest}]`
-      const fullPrompt = buildPromptWithReplyContext(ctx, prompt)
+      const fullPrompt = buildPromptWithReplyContext(ctx, prompt, botId)
       handlePrompt(ctx, fullPrompt).catch((e) => console.error("handlePrompt error:", e))
     } catch (e) {
       console.error("Photo upload error:", e)
