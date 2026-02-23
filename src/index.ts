@@ -66,5 +66,7 @@ bot.start({
     Promise.all(
       scopes.map((scope) => bot.api.setMyCommands(commands, { scope })),
     ).catch((e) => console.error("Failed to set bot commands:", e))
+    bot.api.sendMessage(userId, `Bot started at ${new Date().toLocaleString()}`)
+      .catch((e) => console.error("Failed to send startup message:", e))
   },
 })
