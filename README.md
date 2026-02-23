@@ -4,9 +4,12 @@ Telegram bot interface for Claude Code on a VPS. Message the bot from any device
 
 ## Features
 
-- **Project switching** — select any project directory via inline keyboard
+- **Project switching** — select any project directory via inline keyboard, auto-unpins old messages
 - **Streaming responses** — progressively edited messages with live Claude output
 - **Session continuity** — follow-up messages continue the same Claude conversation
+- **Message queuing** — messages sent while Claude is busy are queued and processed in order
+- **Thinking stream** — Claude's thinking/reasoning content streamed in a separate message
+- **Branch awareness** — current git branch and open PRs shown in `/status` and response footers
 - **Voice messages** — voice notes transcribed via Groq Whisper, then sent to Claude as text
 - **Long response splitting** — auto-splits messages exceeding Telegram's 4000 char limit
 - **MarkdownV2 rendering** — formatted output with plain text fallback
@@ -113,7 +116,8 @@ Text messages are forwarded to Claude Code as prompts. Voice messages are transc
 - Long responses auto-split into multiple messages (4000 char limit)
 - Follow-up messages continue the same Claude session via `-r <session-id>`
 - Voice notes are transcribed via Groq Whisper (`whisper-large-v3-turbo`), files >20MB are chunked with ffmpeg
-- One active process per user; use `/stop` to cancel
+- One active process per user; messages sent while busy are queued automatically
+- Use `/stop` to cancel the current process and clear the queue
 
 ## Stack
 
