@@ -687,7 +687,10 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     let cwd = effectiveCwd ?? getEffectiveCwd(state)
     while (true) {
       const sessionId = state.sessions.get(cwd)
-      const projectName = getEffectiveProjectName(state, projectsDir)
+      const wtEntry = [...state.worktrees.values()].find((w) => w.path === cwd)
+      const projectName = wtEntry
+        ? `${basename(wtEntry.projectPath)}/${basename(cwd)}`
+        : cwd === projectsDir ? "general" : basename(cwd)
       const branchName = cwd !== projectsDir ? getCurrentBranch(cwd) : null
       try {
         const events = runClaude(userId, currentPrompt, cwd, currentCtx.chat!.id, sessionId)
