@@ -1,5 +1,5 @@
 import { Bot, InlineKeyboard, Keyboard, type Context } from "grammy"
-import { readdirSync, statSync, mkdirSync, writeFileSync } from "fs"
+import { readdirSync, statSync, mkdirSync, writeFileSync, readFileSync } from "fs"
 import { join, basename } from "path"
 import { runClaude, stopClaude, hasActiveProcess } from "./claude"
 import { streamToTelegram } from "./telegram"
@@ -9,11 +9,18 @@ import { getGitHubUrl, getCurrentBranch, listBranches, listOpenPRs } from "./git
 
 type QueuedMessage = { prompt: string; ctx: Context }
 
+type PendingPlan = {
+  planPath: string
+  sessionId?: string
+  projectPath: string
+}
+
 type UserState = {
   activeProject: string
   sessions: Map<string, string>
   queue: QueuedMessage[]
   queueStatusMessageId?: number
+  pendingPlan?: PendingPlan
 }
 
 const userStates = new Map<number, UserState>()
@@ -138,6 +145,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const chatId = ctx.chat!.id
     state.activeProject = fullPath
     state.queue = []
+    state.pendingPlan = undefined
     await cleanupQueueStatus(state, ctx)
     await ctx.answerCallbackQuery({ text: `Switched to ${displayName}` })
     const ghUrl = isGeneral ? null : getGitHubUrl(fullPath)
@@ -160,6 +168,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const stopped = stopClaude(userId)
     const hadQueue = state.queue.length > 0
     state.queue = []
+    state.pendingPlan = undefined
     await cleanupQueueStatus(state, ctx)
     const msg = stopped ? "Process stopped." + (hadQueue ? " Queue cleared." : "") : "No active process."
     await ctx.reply(msg, { reply_markup: mainKeyboard })
@@ -259,6 +268,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
     state.sessions.delete(state.activeProject)
     state.queue = []
+    state.pendingPlan = undefined
     await cleanupQueueStatus(state, ctx)
     await ctx.reply("Session cleared. Next message starts a fresh conversation.", { reply_markup: mainKeyboard })
   })
@@ -365,6 +375,115 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     await ctx.answerCallbackQuery({ text: count > 0 ? `Cleared ${count} queued message(s).` : "Queue is empty." })
   })
 
+  /** Read plan file and send to user with action buttons */
+  async function presentPlan(ctx: Context, userId: number, state: UserState, result: { planPath?: string; sessionId?: string }) {
+    const planPath = result.planPath!
+    let planContent: string
+    try {
+      planContent = readFileSync(planPath, "utf-8")
+    } catch {
+      await ctx.reply("Could not read plan file.", { reply_markup: mainKeyboard })
+      return
+    }
+
+    state.pendingPlan = {
+      planPath,
+      sessionId: result.sessionId,
+      projectPath: state.activeProject,
+    }
+
+    const maxLen = 4000
+    const display = planContent.length > maxLen
+      ? planContent.slice(0, maxLen) + "\n... (truncated)"
+      : planContent
+
+    await ctx.api.sendMessage(ctx.chat!.id, display)
+
+    const keyboard = new InlineKeyboard()
+      .text("Execute (new session)", `plan_new:${userId}`).row()
+      .text("Execute (keep context)", `plan_resume:${userId}`).row()
+      .text("Modify plan", `plan_modify:${userId}`)
+
+    await ctx.api.sendMessage(ctx.chat!.id, "Plan ready. How would you like to proceed?", { reply_markup: keyboard })
+  }
+
+  bot.callbackQuery(/^plan_new:(\d+)$/, async (ctx) => {
+    const userId = ctx.from.id
+    const state = getState(userId)
+    const plan = state.pendingPlan
+    if (!plan) {
+      await ctx.answerCallbackQuery({ text: "No pending plan" })
+      return
+    }
+
+    let planContent: string
+    try {
+      planContent = readFileSync(plan.planPath, "utf-8")
+    } catch {
+      await ctx.answerCallbackQuery({ text: "Could not read plan file" })
+      state.pendingPlan = undefined
+      return
+    }
+
+    state.activeProject = plan.projectPath
+    state.sessions.delete(plan.projectPath)
+    state.pendingPlan = undefined
+    await ctx.answerCallbackQuery({ text: "Executing plan (new session)..." })
+    await ctx.editMessageText("Executing plan (new session)...")
+
+    const prompt = `Execute the following plan. Do not re-enter plan mode.\n\n${planContent}`
+    runAndDrain(ctx, prompt, state, userId).catch((e) => console.error("plan_new error:", e))
+  })
+
+  bot.callbackQuery(/^plan_resume:(\d+)$/, async (ctx) => {
+    const userId = ctx.from.id
+    const state = getState(userId)
+    const plan = state.pendingPlan
+    if (!plan) {
+      await ctx.answerCallbackQuery({ text: "No pending plan" })
+      return
+    }
+
+    state.activeProject = plan.projectPath
+    if (plan.sessionId) {
+      state.sessions.set(plan.projectPath, plan.sessionId)
+    }
+    state.pendingPlan = undefined
+    await ctx.answerCallbackQuery({ text: "Executing plan (keeping context)..." })
+    await ctx.editMessageText("Executing plan (keeping context)...")
+
+    const prompt = "The plan has been approved. Proceed with execution. Do not re-enter plan mode."
+    runAndDrain(ctx, prompt, state, userId).catch((e) => console.error("plan_resume error:", e))
+  })
+
+  bot.callbackQuery(/^plan_modify:(\d+)$/, async (ctx) => {
+    const userId = ctx.from.id
+    const state = getState(userId)
+    if (!state.pendingPlan) {
+      await ctx.answerCallbackQuery({ text: "No pending plan" })
+      return
+    }
+    const cancelKeyboard = new InlineKeyboard()
+      .text("Cancel", `plan_cancel:${userId}`)
+    await ctx.answerCallbackQuery({ text: "Send your feedback" })
+    await ctx.editMessageText("Send your feedback. Next message will continue the conversation with plan context.", { reply_markup: cancelKeyboard })
+  })
+
+  bot.callbackQuery(/^plan_cancel:(\d+)$/, async (ctx) => {
+    const userId = ctx.from.id
+    const state = getState(userId)
+    if (!state.pendingPlan) {
+      await ctx.answerCallbackQuery({ text: "No pending plan" })
+      return
+    }
+    const keyboard = new InlineKeyboard()
+      .text("Execute (new session)", `plan_new:${userId}`).row()
+      .text("Execute (keep context)", `plan_resume:${userId}`).row()
+      .text("Modify plan", `plan_modify:${userId}`)
+    await ctx.answerCallbackQuery()
+    await ctx.editMessageText("Plan ready. How would you like to proceed?", { reply_markup: keyboard })
+  })
+
   /** Send a prompt to Claude and stream the response */
   async function handlePrompt(ctx: Context, prompt: string) {
     const state = getState(ctx.from!.id)
@@ -375,6 +494,19 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
 
     const userId = ctx.from!.id
+
+    if (state.pendingPlan) {
+      const plan = state.pendingPlan
+      state.activeProject = plan.projectPath
+      if (plan.sessionId) {
+        state.sessions.set(plan.projectPath, plan.sessionId)
+      }
+      state.pendingPlan = undefined
+      const feedbackPrompt = `Plan feedback from user: ${prompt}\n\nRevise the plan based on this feedback. Do not execute yet — present the updated plan.`
+      await runAndDrain(ctx, feedbackPrompt, state, userId)
+      return
+    }
+
     if (hasActiveProcess(userId)) {
       state.queue.push({ prompt, ctx })
       await sendOrUpdateQueueStatus(ctx, state)
@@ -397,6 +529,11 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
         const result = await streamToTelegram(currentCtx, events, projectName, { branchName })
         if (result.sessionId) {
           state.sessions.set(state.activeProject, result.sessionId)
+        }
+        if (result.planPath) {
+          stopClaude(userId)
+          await presentPlan(currentCtx, userId, state, result)
+          return
         }
       } catch (e) {
         console.error("runAndDrain error:", e)
