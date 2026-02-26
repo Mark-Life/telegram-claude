@@ -37,8 +37,9 @@ function escapeHtml(text: string) {
 
 /** Persistent reply keyboard with all commands */
 const mainKeyboard = new Keyboard()
-  .text("Projects").text("History").row()
-  .text("Stop").text("New").row()
+  .text("Projects").text("Worktrees").row()
+  .text("History").text("New").row()
+  .text("Stop").row()
   .resized().persistent()
 
 /** Extract reply-to-message text and prepend it as context (skip bot's own messages) */
@@ -113,6 +114,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
   const buttonToCommand: Record<string, string> = {
     Projects: "/projects",
+    Worktrees: "/wt",
     History: "/history",
     Stop: "/stop",
     New: "/new",
@@ -166,6 +168,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const state = getState(ctx.from!.id)
     const chatId = ctx.chat!.id
     state.activeProject = fullPath
+    state.activeWorktree = undefined
+    state.worktrees.clear()
     state.queue = []
     state.pendingPlan = undefined
     await cleanupQueueStatus(state, ctx)
@@ -197,17 +201,21 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
   })
 
   bot.command("status", async (ctx) => {
-    const state = getState(ctx.from!.id)
+    const userId = ctx.from!.id
+    const state = getState(userId)
     const project = state.activeProject
       ? state.activeProject === projectsDir ? "general" : basename(state.activeProject)
       : "(none)"
-    const running = hasActiveProcess(ctx.from!.id) ? "Yes" : "No"
+    const effectiveCwd = getEffectiveCwd(state)
+    const running = hasActiveProcess(userId, effectiveCwd) ? "Yes" : "No"
     const sessionCount = state.sessions.size
-    const branch = state.activeProject && state.activeProject !== projectsDir ? getCurrentBranch(state.activeProject) : null
+    const branch = effectiveCwd && effectiveCwd !== projectsDir ? getCurrentBranch(effectiveCwd) : null
     const branchLine = branch ? `\nBranch: ${branch}` : ""
     const queueLine = state.queue.length > 0 ? `\nQueued: ${state.queue.length}` : ""
+    const wtLine = state.activeWorktree ? `\nWorktree: ${state.activeWorktree}` : ""
+    const wtCountLine = state.worktrees.size > 0 ? `\nWorktrees: ${state.worktrees.size}` : ""
 
-    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}${queueLine}`, { reply_markup: mainKeyboard })
+    await ctx.reply(`Project: ${project}${wtLine}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}${queueLine}${wtCountLine}`, { reply_markup: mainKeyboard })
   })
 
   bot.command("help", async (ctx) => {
@@ -219,6 +227,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
         "/new — start fresh conversation",
         "/stop — kill active process",
         "/status — show current state",
+        "/wt — manage git worktrees",
         "/branch — show current git branch",
         "/pr — list open pull requests",
         "/help — show this message",
@@ -422,7 +431,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     if (!state.activeProject) {
       state.activeProject = projectsDir
     }
-    state.sessions.delete(state.activeProject)
+    const effectiveCwd = getEffectiveCwd(state)
+    state.sessions.delete(effectiveCwd)
     state.queue = []
     state.pendingPlan = undefined
     await cleanupQueueStatus(state, ctx)
