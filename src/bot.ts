@@ -5,9 +5,11 @@ import { runClaude, stopClaude, hasActiveProcess } from "./claude"
 import { streamToTelegram } from "./telegram"
 import { transcribeAudio } from "./transcribe"
 import { listAllSessions, getSessionProject } from "./history"
-import { getGitHubUrl, getCurrentBranch, listBranches, listOpenPRs } from "./git"
+import { getGitHubUrl, getCurrentBranch, listBranches, listOpenPRs, createWorktree, removeWorktree, listWorktrees } from "./git"
 
-type QueuedMessage = { prompt: string; ctx: Context }
+type QueuedMessage = { prompt: string; ctx: Context; targetCwd: string }
+
+type WorktreeInfo = { path: string; branch: string; projectPath: string }
 
 type PendingPlan = {
   planPath: string
@@ -17,6 +19,8 @@ type PendingPlan = {
 
 type UserState = {
   activeProject: string
+  activeWorktree?: string
+  worktrees: Map<string, WorktreeInfo>
   sessions: Map<string, string>
   queue: QueuedMessage[]
   queueStatusMessageId?: number
@@ -50,10 +54,28 @@ function buildPromptWithReplyContext(ctx: Context, userText: string, botId?: num
 function getState(userId: number): UserState {
   let state = userStates.get(userId)
   if (!state) {
-    state = { activeProject: "", sessions: new Map(), queue: [] }
+    state = { activeProject: "", worktrees: new Map(), sessions: new Map(), queue: [] }
     userStates.set(userId, state)
   }
   return state
+}
+
+/** Get the effective working directory: worktree path if active, else activeProject */
+function getEffectiveCwd(state: UserState) {
+  if (state.activeWorktree) {
+    const wt = state.worktrees.get(state.activeWorktree)
+    if (wt) return wt.path
+  }
+  return state.activeProject
+}
+
+/** Get display name: "project/worktree" if worktree active, else project basename */
+function getEffectiveProjectName(state: UserState, projectsDir: string) {
+  if (state.activeWorktree) {
+    const wt = state.worktrees.get(state.activeWorktree)
+    if (wt) return `${basename(wt.projectPath)}/${state.activeWorktree}`
+  }
+  return state.activeProject === projectsDir ? "general" : basename(state.activeProject)
 }
 
 /** List project directories */
