@@ -70,15 +70,6 @@ function getEffectiveCwd(state: UserState) {
   return state.activeProject
 }
 
-/** Get display name: "project/worktree" if worktree active, else project basename */
-function getEffectiveProjectName(state: UserState, projectsDir: string) {
-  if (state.activeWorktree) {
-    const wt = state.worktrees.get(state.activeWorktree)
-    if (wt) return `${basename(wt.projectPath)}/${state.activeWorktree}`
-  }
-  return state.activeProject === projectsDir ? "general" : basename(state.activeProject)
-}
-
 /** List project directories */
 function listProjects(projectsDir: string) {
   try {
@@ -294,6 +285,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
   const MAX_WORKTREES = 5
   const WORKTREES_BASE = join(projectsDir, ".worktrees")
+  const VALID_WT_NAME = /^[a-zA-Z0-9._-]+$/
 
   bot.command("wt", async (ctx) => {
     const userId = ctx.from!.id
@@ -325,6 +317,10 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
     if (sub === "new") {
       const name = args[1] || `task-${Date.now()}`
+      if (!VALID_WT_NAME.test(name)) {
+        await ctx.reply("Invalid name. Use alphanumeric, hyphens, underscores, dots only.", { reply_markup: mainKeyboard })
+        return
+      }
       if (state.worktrees.size >= MAX_WORKTREES) {
         await ctx.reply(`Max ${MAX_WORKTREES} worktrees. Remove one first.`, { reply_markup: mainKeyboard })
         return
