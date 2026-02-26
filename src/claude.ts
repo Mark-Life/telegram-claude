@@ -44,7 +44,12 @@ export type ClaudeEvent =
   | { kind: "error"; message: string }
 
 type ProcessEntry = { ac: AbortController; done: Promise<void> }
-const userProcesses = new Map<number, ProcessEntry>()
+const userProcesses = new Map<string, ProcessEntry>()
+
+/** Build a composite key for process tracking: userId:cwd */
+function processKey(userId: number, cwd: string) {
+  return `${userId}:${cwd}`
+}
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 
 /** Format tool input into a short description */
@@ -188,10 +193,11 @@ export async function* runClaude(
   chatId: number,
   sessionId?: string,
 ): AsyncGenerator<ClaudeEvent> {
-  const existing = userProcesses.get(telegramUserId)
+  const key = processKey(telegramUserId, projectDir)
+  const existing = userProcesses.get(key)
   if (existing) {
     if (!existing.ac.signal.aborted) {
-      yield { kind: "error", message: "A Claude process is already running. Use /stop first." }
+      yield { kind: "error", message: "A Claude process is already running in this worktree." }
       return
     }
     await existing.done
@@ -209,7 +215,7 @@ export async function* runClaude(
   const ac = new AbortController()
   let resolveCleanup!: () => void
   const done = new Promise<void>((r) => { resolveCleanup = r })
-  userProcesses.set(telegramUserId, { ac, done })
+  userProcesses.set(key, { ac, done })
 
   const env = { ...process.env, TELEGRAM_CHAT_ID: String(chatId) }
   delete env.CLAUDECODE
@@ -268,23 +274,41 @@ export async function* runClaude(
     proc.kill()
     await proc.exited
     await stderrDrain.catch(() => {})
-    userProcesses.delete(telegramUserId)
+    userProcesses.delete(key)
     resolveCleanup()
   }
 }
 
-/** Stop the active Claude process for a user */
-export function stopClaude(telegramUserId: number) {
-  const entry = userProcesses.get(telegramUserId)
-  if (!entry || entry.ac.signal.aborted) return false
-  entry.ac.abort()
-  return true
+/** Stop the active Claude process for a user. If cwd provided, stop only that process. Otherwise stop all. */
+export function stopClaude(telegramUserId: number, cwd?: string) {
+  if (cwd) {
+    const entry = userProcesses.get(processKey(telegramUserId, cwd))
+    if (!entry || entry.ac.signal.aborted) return false
+    entry.ac.abort()
+    return true
+  }
+  const prefix = `${telegramUserId}:`
+  let stopped = false
+  for (const [key, entry] of userProcesses) {
+    if (key.startsWith(prefix) && !entry.ac.signal.aborted) {
+      entry.ac.abort()
+      stopped = true
+    }
+  }
+  return stopped
 }
 
-/** Check if a user has an active process */
-export function hasActiveProcess(telegramUserId: number) {
-  const entry = userProcesses.get(telegramUserId)
-  return !!entry && !entry.ac.signal.aborted
+/** Check if a user has an active process. If cwd provided, check only that. Otherwise check all. */
+export function hasActiveProcess(telegramUserId: number, cwd?: string) {
+  if (cwd) {
+    const entry = userProcesses.get(processKey(telegramUserId, cwd))
+    return !!entry && !entry.ac.signal.aborted
+  }
+  const prefix = `${telegramUserId}:`
+  for (const [key, entry] of userProcesses) {
+    if (key.startsWith(prefix) && !entry.ac.signal.aborted) return true
+  }
+  return false
 }
 
 /** Abort all active Claude processes (used during shutdown) */
