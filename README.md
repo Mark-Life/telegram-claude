@@ -13,6 +13,7 @@ Telegram bot interface for Claude Code on a VPS. Message the bot from any device
 - **Voice messages** — voice notes transcribed via Groq Whisper, then sent to Claude as text
 - **Long response splitting** — auto-splits messages exceeding Telegram's 4000 char limit
 - **MarkdownV2 rendering** — formatted output with plain text fallback
+- **Plan mode interception** — when Claude enters plan mode, the plan is presented for approval with options to execute (new/resume session), modify with feedback, or cancel
 - **Cost & duration tracking** — metadata footer on each response
 - **Access control** — single authorized user via Telegram user ID
 
@@ -117,6 +118,7 @@ Text messages are forwarded to Claude Code as prompts. Voice messages are transc
 - Follow-up messages continue the same Claude session via `-r <session-id>`
 - Voice notes are transcribed via Groq Whisper (`whisper-large-v3-turbo`), files >20MB are chunked with ffmpeg
 - One active process per user; messages sent while busy are queued automatically
+- When Claude writes a plan file and calls `ExitPlanMode`, the bot intercepts it, displays the plan as plain text, and offers action buttons: execute in a new session, execute keeping context, or modify with feedback
 - Use `/stop` to cancel the current process and clear the queue
 
 ## Stack
