@@ -411,7 +411,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     state.pendingPlan = {
       planPath,
       sessionId: result.sessionId,
-      projectPath: state.activeProject,
+      projectPath: getEffectiveCwd(state),
     }
 
     const maxLen = 4000
@@ -447,14 +447,13 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       return
     }
 
-    state.activeProject = plan.projectPath
     state.sessions.delete(plan.projectPath)
     state.pendingPlan = undefined
     await ctx.answerCallbackQuery({ text: "Executing plan (new session)..." })
     await ctx.editMessageText("Executing plan (new session)...")
 
     const prompt = `Execute the following plan. Do not re-enter plan mode.\n\n${planContent}`
-    runAndDrain(ctx, prompt, state, userId).catch((e) => console.error("plan_new error:", e))
+    runAndDrain(ctx, prompt, state, userId, plan.projectPath).catch((e) => console.error("plan_new error:", e))
   })
 
   bot.callbackQuery(/^plan_resume:(\d+)$/, async (ctx) => {
@@ -466,7 +465,6 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       return
     }
 
-    state.activeProject = plan.projectPath
     if (plan.sessionId) {
       state.sessions.set(plan.projectPath, plan.sessionId)
     }
@@ -475,7 +473,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     await ctx.editMessageText("Executing plan (keeping context)...")
 
     const prompt = "The plan has been approved. Proceed with execution. Do not re-enter plan mode."
-    runAndDrain(ctx, prompt, state, userId).catch((e) => console.error("plan_resume error:", e))
+    runAndDrain(ctx, prompt, state, userId, plan.projectPath).catch((e) => console.error("plan_resume error:", e))
   })
 
   bot.callbackQuery(/^plan_modify:(\d+)$/, async (ctx) => {
@@ -516,56 +514,58 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
 
     const userId = ctx.from!.id
+    const effectiveCwd = getEffectiveCwd(state)
 
     if (state.pendingPlan) {
       const plan = state.pendingPlan
-      state.activeProject = plan.projectPath
       if (plan.sessionId) {
         state.sessions.set(plan.projectPath, plan.sessionId)
       }
       state.pendingPlan = undefined
       const feedbackPrompt = `Plan feedback from user: ${prompt}\n\nRevise the plan based on this feedback. Do not execute yet — present the updated plan.`
-      await runAndDrain(ctx, feedbackPrompt, state, userId)
+      await runAndDrain(ctx, feedbackPrompt, state, userId, plan.projectPath)
       return
     }
 
-    if (hasActiveProcess(userId)) {
-      state.queue.push({ prompt, ctx })
+    if (hasActiveProcess(userId, effectiveCwd)) {
+      state.queue.push({ prompt, ctx, targetCwd: effectiveCwd })
       await sendOrUpdateQueueStatus(ctx, state)
       return
     }
 
-    await runAndDrain(ctx, prompt, state, userId)
+    await runAndDrain(ctx, prompt, state, userId, effectiveCwd)
   }
 
   /** Run a Claude prompt and drain any queued messages afterward */
-  async function runAndDrain(ctx: Context, prompt: string, state: UserState, userId: number) {
+  async function runAndDrain(ctx: Context, prompt: string, state: UserState, userId: number, effectiveCwd?: string) {
     let currentCtx = ctx
     let currentPrompt = prompt
+    let cwd = effectiveCwd ?? getEffectiveCwd(state)
     while (true) {
-      const sessionId = state.sessions.get(state.activeProject)
-      const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
-      const branchName = state.activeProject !== projectsDir ? getCurrentBranch(state.activeProject) : null
+      const sessionId = state.sessions.get(cwd)
+      const projectName = getEffectiveProjectName(state, projectsDir)
+      const branchName = cwd !== projectsDir ? getCurrentBranch(cwd) : null
       try {
-        const events = runClaude(userId, currentPrompt, state.activeProject, currentCtx.chat!.id, sessionId)
+        const events = runClaude(userId, currentPrompt, cwd, currentCtx.chat!.id, sessionId)
         const result = await streamToTelegram(currentCtx, events, projectName, { branchName })
         if (result.sessionId) {
-          state.sessions.set(state.activeProject, result.sessionId)
+          state.sessions.set(cwd, result.sessionId)
         }
         if (result.planPath) {
-          stopClaude(userId)
+          stopClaude(userId, cwd)
           await presentPlan(currentCtx, userId, state, result)
           return
         }
       } catch (e) {
         console.error("runAndDrain error:", e)
       }
-      if (state.queue.length === 0) break
-      const next = state.queue.shift()!
+      const idx = state.queue.findIndex((q) => q.targetCwd === cwd)
+      if (idx === -1) break
+      const next = state.queue.splice(idx, 1)[0]
       currentPrompt = next.prompt
       currentCtx = next.ctx
       if (state.queue.length === 0) await cleanupQueueStatus(state, currentCtx)
-      const remaining = state.queue.length
+      const remaining = state.queue.filter((q) => q.targetCwd === cwd).length
       const queueInfo = remaining > 0 ? ` | ${remaining} more in queue` : ""
       const preview = currentPrompt.length > 200 ? currentPrompt.slice(0, 200) + "..." : currentPrompt
       await currentCtx.reply(`<b>▶ Processing queued message</b>${queueInfo}\n<pre>${escapeHtml(preview)}</pre>`, { parse_mode: "HTML" }).catch(() => {})
