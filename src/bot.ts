@@ -5,7 +5,7 @@ import { runClaude, stopClaude, hasActiveProcess } from "./claude"
 import { streamToTelegram } from "./telegram"
 import { transcribeAudio } from "./transcribe"
 import { listAllSessions, getSessionProject } from "./history"
-import { getGitHubUrl, getCurrentBranch, listBranches, listOpenPRs, createWorktree, removeWorktree, listWorktrees } from "./git"
+import { getGitHubUrl, getCurrentBranch, listBranches, listOpenPRs, createWorktree, removeWorktree } from "./git"
 
 type QueuedMessage = { prompt: string; ctx: Context; targetCwd: string }
 
