@@ -389,16 +389,12 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       projectPath: state.activeProject,
     }
 
-    const maxLen = 3600
+    const maxLen = 4000
     const display = planContent.length > maxLen
       ? planContent.slice(0, maxLen) + "\n... (truncated)"
       : planContent
-    const escaped = escapeHtml(display)
-    const html = `<blockquote expandable>${escaped}</blockquote>`
 
-    await ctx.api.sendMessage(ctx.chat!.id, html, { parse_mode: "HTML" }).catch(async () => {
-      await ctx.api.sendMessage(ctx.chat!.id, display)
-    })
+    await ctx.api.sendMessage(ctx.chat!.id, display)
 
     const keyboard = new InlineKeyboard()
       .text("Execute (new session)", `plan_new:${userId}`).row()
@@ -464,8 +460,25 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       await ctx.answerCallbackQuery({ text: "No pending plan" })
       return
     }
+    const cancelKeyboard = new InlineKeyboard()
+      .text("Cancel", `plan_cancel:${userId}`)
     await ctx.answerCallbackQuery({ text: "Send your feedback" })
-    await ctx.editMessageText("Send your feedback. Next message will continue the conversation with plan context.")
+    await ctx.editMessageText("Send your feedback. Next message will continue the conversation with plan context.", { reply_markup: cancelKeyboard })
+  })
+
+  bot.callbackQuery(/^plan_cancel:(\d+)$/, async (ctx) => {
+    const userId = ctx.from.id
+    const state = getState(userId)
+    if (!state.pendingPlan) {
+      await ctx.answerCallbackQuery({ text: "No pending plan" })
+      return
+    }
+    const keyboard = new InlineKeyboard()
+      .text("Execute (new session)", `plan_new:${userId}`).row()
+      .text("Execute (keep context)", `plan_resume:${userId}`).row()
+      .text("Modify plan", `plan_modify:${userId}`)
+    await ctx.answerCallbackQuery()
+    await ctx.editMessageText("Plan ready. How would you like to proceed?", { reply_markup: keyboard })
   })
 
   /** Send a prompt to Claude and stream the response */
