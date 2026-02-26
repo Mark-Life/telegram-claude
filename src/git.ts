@@ -48,6 +48,51 @@ export function listBranches(projectPath: string) {
   }
 }
 
+type WorktreeEntry = { path: string; branch: string; head: string }
+
+/** Create a new git worktree with a new branch */
+export function createWorktree(projectPath: string, worktreePath: string, branchName: string) {
+  execSync(`git worktree add -b "${branchName}" "${worktreePath}"`, { cwd: projectPath, timeout: 10000 })
+}
+
+/** Remove a git worktree */
+export function removeWorktree(projectPath: string, worktreePath: string) {
+  execSync(`git worktree remove "${worktreePath}" --force`, { cwd: projectPath, timeout: 10000 })
+}
+
+/** List all git worktrees for a project directory */
+export function listWorktrees(projectPath: string): WorktreeEntry[] {
+  try {
+    const output = execSync("git worktree list --porcelain", { cwd: projectPath, timeout: 5000 })
+      .toString()
+      .trim()
+    if (!output) return []
+
+    const entries: WorktreeEntry[] = []
+    let current: Partial<WorktreeEntry> = {}
+    for (const line of output.split("\n")) {
+      if (line.startsWith("worktree ")) {
+        current.path = line.slice("worktree ".length)
+      } else if (line.startsWith("HEAD ")) {
+        current.head = line.slice("HEAD ".length)
+      } else if (line.startsWith("branch refs/heads/")) {
+        current.branch = line.slice("branch refs/heads/".length)
+      } else if (line === "") {
+        if (current.path && current.head && current.branch) {
+          entries.push(current as WorktreeEntry)
+        }
+        current = {}
+      }
+    }
+    if (current.path && current.head && current.branch) {
+      entries.push(current as WorktreeEntry)
+    }
+    return entries
+  } catch {
+    return []
+  }
+}
+
 /** List open PRs for a project directory via gh CLI, or null on error */
 export function listOpenPRs(projectPath: string) {
   try {
