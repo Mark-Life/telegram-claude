@@ -39,6 +39,7 @@ export type ClaudeEvent =
   | { kind: "thinking_start" }
   | { kind: "thinking_delta"; text: string }
   | { kind: "thinking_done"; durationMs: number }
+  | { kind: "plan_ready"; planPath: string }
   | { kind: "result"; text: string; sessionId: string; cost: number; durationMs: number; turns: number }
   | { kind: "error"; message: string }
 
@@ -81,6 +82,7 @@ function createStreamParser() {
   let currentToolName = ""
   let toolInputJson = ""
   let thinkingStartTime = 0
+  let lastPlanPath = ""
 
   return function* parseStreamLines(lines: string[]): Generator<ClaudeEvent> {
     for (const line of lines) {
@@ -139,6 +141,13 @@ function createStreamParser() {
           const shortInput = formatToolInput(currentToolName, input)
           hasEmittedContent = true
           yield { kind: "tool_use", name: currentToolName, input: shortInput }
+          if (currentToolName === "Write" && typeof input.file_path === "string" && input.file_path.includes(".claude/plans/")) {
+            lastPlanPath = input.file_path
+          }
+          if (currentToolName === "ExitPlanMode" && lastPlanPath) {
+            yield { kind: "plan_ready", planPath: lastPlanPath }
+            lastPlanPath = ""
+          }
         } else if (currentBlockType === "thinking") {
           const elapsed = Date.now() - thinkingStartTime
           yield { kind: "thinking_done", durationMs: elapsed }

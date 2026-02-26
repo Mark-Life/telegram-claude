@@ -126,6 +126,7 @@ type StreamResult = {
   durationMs?: number
   turns?: number
   messageId?: number
+  planPath?: string
 }
 
 type StreamOptions = { branchName?: string | null }
@@ -290,6 +291,9 @@ export async function streamToTelegram(
         }
         thinkingText = ""
         mode = "none"
+      } else if (event.kind === "plan_ready") {
+        result.planPath = event.planPath
+        break
       } else if (event.kind === "result") {
         result.sessionId = event.sessionId
         result.cost = event.cost
