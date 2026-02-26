@@ -489,8 +489,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const state = getState(ctx.from!.id)
 
     if (!state.activeProject) {
-      await ctx.reply("No project selected. Use /projects to pick one.", { reply_markup: mainKeyboard })
-      return
+      state.activeProject = projectsDir
+      await ctx.reply("No project selected. Using General (all projects).", { reply_markup: mainKeyboard })
     }
 
     const userId = ctx.from!.id
@@ -581,8 +581,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const state = getState(ctx.from!.id)
 
     if (!state.activeProject) {
-      await ctx.reply("No project selected. Use /projects to pick one.", { reply_markup: mainKeyboard })
-      return
+      state.activeProject = projectsDir
+      await ctx.reply("No project selected. Using General (all projects).", { reply_markup: mainKeyboard })
     }
 
     let prompt: string
@@ -615,8 +615,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
   async function saveUploadedFile(ctx: Context, filename: string, fileId?: string) {
     const state = getState(ctx.from!.id)
     if (!state.activeProject) {
-      await ctx.reply("No project selected. Use /projects to pick one.", { reply_markup: mainKeyboard })
-      return null
+      state.activeProject = projectsDir
+      await ctx.reply("No project selected. Using General (all projects).", { reply_markup: mainKeyboard })
     }
 
     const file = fileId ? await ctx.api.getFile(fileId) : await ctx.getFile()
