@@ -145,6 +145,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const chatId = ctx.chat!.id
     state.activeProject = fullPath
     state.queue = []
+    state.pendingPlan = undefined
     await cleanupQueueStatus(state, ctx)
     await ctx.answerCallbackQuery({ text: `Switched to ${displayName}` })
     const ghUrl = isGeneral ? null : getGitHubUrl(fullPath)
@@ -167,6 +168,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const stopped = stopClaude(userId)
     const hadQueue = state.queue.length > 0
     state.queue = []
+    state.pendingPlan = undefined
     await cleanupQueueStatus(state, ctx)
     const msg = stopped ? "Process stopped." + (hadQueue ? " Queue cleared." : "") : "No active process."
     await ctx.reply(msg, { reply_markup: mainKeyboard })
@@ -266,6 +268,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
     state.sessions.delete(state.activeProject)
     state.queue = []
+    state.pendingPlan = undefined
     await cleanupQueueStatus(state, ctx)
     await ctx.reply("Session cleared. Next message starts a fresh conversation.", { reply_markup: mainKeyboard })
   })
