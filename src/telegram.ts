@@ -121,31 +121,28 @@ async function safeEditMessage(ctx: Context, chatId: number, messageId: number, 
   }
 }
 
-/** Send a draft update. Best-effort — swallows errors. Falls back to plain text on HTML failure. */
+/** Send a draft update. Falls back to plain text on HTML parse failure. Swallows "not modified" errors. */
 async function safeSendDraft(ctx: Context, chatId: number, draftId: number, html: string, rawText?: string) {
   const displayText = html || "..."
   try {
     await ctx.api.sendMessageDraft(chatId, draftId, displayText, { parse_mode: "HTML" })
-  } catch {
+  } catch (err: any) {
+    if (err?.description?.includes("not modified")) return
     try {
       await ctx.api.sendMessageDraft(chatId, draftId, rawText ?? displayText)
-    } catch {
-      // best-effort — swallow
+    } catch (err2: any) {
+      if (!err2?.description?.includes("not modified")) throw err2
     }
   }
 }
 
-/** Send a permanent message with HTML fallback. Returns the Message or undefined. */
+/** Send a permanent message with HTML fallback. Returns the Message or throws on real errors. */
 async function safeSendMessage(ctx: Context, chatId: number, html: string, rawText?: string) {
   const displayText = html || "..."
   try {
     return await ctx.api.sendMessage(chatId, displayText, { parse_mode: "HTML" })
   } catch {
-    try {
-      return await ctx.api.sendMessage(chatId, rawText ?? displayText)
-    } catch {
-      return undefined
-    }
+    return await ctx.api.sendMessage(chatId, rawText ?? displayText)
   }
 }
 
@@ -306,7 +303,7 @@ export async function streamToTelegram(
   const editTimer = setInterval(async () => {
     if (pendingEdit && mode === "text") await flushText().catch(() => {})
     if (pendingEdit && mode === "thinking") await flushThinking().catch(() => {})
-  }, DRAFT_INTERVAL_MS)
+  }, EDIT_INTERVAL_MS)
 
   const typingTimer = setInterval(() => {
     ctx.api.sendChatAction(chatId, "typing").catch(() => {})
@@ -404,23 +401,23 @@ export async function streamToTelegram(
     if (!useDrafts) lastTextMessageId = messageId
   }
 
-  if (useDrafts && accumulated) {
+  const footer = formatFooter(projectName, result, branchName)
+
+  if (accumulated && (useDrafts || lastTextMessageId)) {
     const html = markdownToTelegramHtml(accumulated)
-    const footer = formatFooter(projectName, result, branchName)
     const display = footer ? `${html}\n\n${footer}` : html
-    const sent = await safeSendMessage(ctx, chatId, display || "...", accumulated)
-    lastTextMessageId = sent?.message_id ?? 0
-  } else if (!useDrafts && lastTextMessageId && accumulated) {
-    const html = markdownToTelegramHtml(accumulated)
-    const footer = formatFooter(projectName, result, branchName)
-    const display = footer ? `${html}\n\n${footer}` : html
-    const ok = await safeEditMessage(ctx, chatId, lastTextMessageId, display || "...").catch(() => false)
-    if (!ok && footer) {
-      await ctx.api.sendMessage(chatId, footer, { parse_mode: "HTML" }).catch(() => {})
+
+    if (useDrafts) {
+      const sent = await safeSendMessage(ctx, chatId, display || "...", accumulated)
+      lastTextMessageId = sent?.message_id ?? 0
+    } else {
+      const ok = await safeEditMessage(ctx, chatId, lastTextMessageId, display || "...").catch(() => false)
+      if (!ok && footer) {
+        await ctx.api.sendMessage(chatId, footer, { parse_mode: "HTML" }).catch(() => {})
+      }
     }
-  } else if (!lastTextMessageId && (result.cost !== undefined || result.durationMs !== undefined)) {
-    const footer = formatFooter(projectName, result, branchName)
-    if (footer) await ctx.api.sendMessage(chatId, footer, { parse_mode: "HTML" }).catch(() => {})
+  } else if (!lastTextMessageId && footer) {
+    await ctx.api.sendMessage(chatId, footer, { parse_mode: "HTML" }).catch(() => {})
   }
 
   result.messageId = lastTextMessageId || undefined
