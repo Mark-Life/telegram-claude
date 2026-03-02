@@ -4,7 +4,9 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun --watch run src/index.ts",
-    "auto-pr": "bun run scripts/auto-pr/index.ts"
+    "auto-pr": "bun run scripts/auto-pr/index.ts",
+    "lint": "bunx --bun ultracite check",
+    "fix": "bunx --bun ultracite fix"
   },
   "dependencies": {
     "execa": "^9.6.1",
@@ -13,7 +15,9 @@
     "marked": "^17.0.2"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.0",
     "@types/bun": "latest",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "ultracite": "7.2.3"
   }
 }
