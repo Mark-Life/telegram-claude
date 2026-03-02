@@ -9,6 +9,11 @@ import { getGitHubUrl, getCurrentBranch, listBranches, listOpenPRs } from "./git
 
 type QueuedMessage = { prompt: string; ctx: Context }
 
+type ComposeMessage = {
+  type: "text" | "voice" | "forwarded" | "file" | "photo"
+  content: string
+}
+
 type PendingPlan = {
   planPath: string
   sessionId?: string
@@ -21,6 +26,8 @@ type UserState = {
   queue: QueuedMessage[]
   queueStatusMessageId?: number
   pendingPlan?: PendingPlan
+  composeMessages?: ComposeMessage[]
+  composeStatusMessageId?: number
 }
 
 const userStates = new Map<number, UserState>()
