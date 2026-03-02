@@ -91,9 +91,9 @@ const marked = new Marked({
     checkbox({ checked }) {
       return checked ? "[x] " : "[ ] "
     },
-    text({ tokens, text }) {
-      if (tokens) return this.parser.parseInline(tokens)
-      return escapeHtml(text)
+    text(token) {
+      if ("tokens" in token && token.tokens) return this.parser.parseInline(token.tokens)
+      return escapeHtml(token.text)
     },
   },
 })
@@ -298,6 +298,7 @@ export async function streamToTelegram(
     accumulated = ""
     toolLines = []
     thinkingText = ""
+    return newMode
   }
 
   const editTimer = setInterval(async () => {
@@ -314,7 +315,7 @@ export async function streamToTelegram(
     for await (const event of events) {
       if (event.kind === "text_delta") {
         if (mode !== "text") {
-          await switchMode("text")
+          mode = await switchMode("text")
           if (useDrafts === null) {
             try {
               await ctx.api.sendMessageDraft(chatId, draftId, "...", { parse_mode: "HTML" })
@@ -331,14 +332,14 @@ export async function streamToTelegram(
         await flushText().catch(() => {})
       } else if (event.kind === "tool_use") {
         if (mode !== "tools") {
-          await switchMode("tools")
+          mode = await switchMode("tools")
           await sendNew("...")
         }
         const label = event.input ? `${event.name}: ${event.input}` : event.name
         toolLines.push(label)
         await flushTools().catch(() => {})
       } else if (event.kind === "thinking_start") {
-        await switchMode("thinking")
+        mode = await switchMode("thinking")
         if (useDrafts) {
           await safeSendDraft(ctx, chatId, draftId, "<i>Thinking...</i>", "Thinking...")
         } else {
@@ -346,7 +347,7 @@ export async function streamToTelegram(
         }
       } else if (event.kind === "thinking_delta") {
         if (mode !== "thinking") {
-          await switchMode("thinking")
+          mode = await switchMode("thinking")
           if (useDrafts) {
             await safeSendDraft(ctx, chatId, draftId, "<i>Thinking...</i>", "Thinking...")
           } else {
@@ -378,14 +379,14 @@ export async function streamToTelegram(
         result.turns = event.turns
         if (!accumulated && event.text) {
           if (mode !== "text") {
-            await switchMode("text")
+            mode = await switchMode("text")
             if (!useDrafts) await sendNew("...")
           }
           accumulated = event.text
         }
       } else if (event.kind === "error") {
         if (mode !== "text") {
-          await switchMode("text")
+          mode = await switchMode("text")
           if (!useDrafts) await sendNew("...")
         }
         accumulated += `\n\n[Error: ${event.message}]`
