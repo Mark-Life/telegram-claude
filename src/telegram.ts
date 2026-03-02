@@ -4,6 +4,7 @@ import type { ClaudeEvent } from "./claude"
 
 const MAX_MSG_LENGTH = 4000
 const EDIT_INTERVAL_MS = 1500
+const DRAFT_INTERVAL_MS = 300
 const TYPING_INTERVAL_MS = 5000
 
 /** Escape HTML special characters */
@@ -120,6 +121,34 @@ async function safeEditMessage(ctx: Context, chatId: number, messageId: number, 
   }
 }
 
+/** Send a draft update. Best-effort — swallows errors. Falls back to plain text on HTML failure. */
+async function safeSendDraft(ctx: Context, chatId: number, draftId: number, html: string, rawText?: string) {
+  const displayText = html || "..."
+  try {
+    await ctx.api.sendMessageDraft(chatId, draftId, displayText, { parse_mode: "HTML" })
+  } catch {
+    try {
+      await ctx.api.sendMessageDraft(chatId, draftId, rawText ?? displayText)
+    } catch {
+      // best-effort — swallow
+    }
+  }
+}
+
+/** Send a permanent message with HTML fallback. Returns the Message or undefined. */
+async function safeSendMessage(ctx: Context, chatId: number, html: string, rawText?: string) {
+  const displayText = html || "..."
+  try {
+    return await ctx.api.sendMessage(chatId, displayText, { parse_mode: "HTML" })
+  } catch {
+    try {
+      return await ctx.api.sendMessage(chatId, rawText ?? displayText)
+    } catch {
+      return undefined
+    }
+  }
+}
+
 type StreamResult = {
   sessionId?: string
   cost?: number
@@ -152,6 +181,8 @@ export async function streamToTelegram(
   let toolLines: string[] = []
   let thinkingText = ""
   let lastTextMessageId = 0
+  let useDrafts: boolean | null = null
+  const draftId = chatId
 
   /** Send a new Telegram message and track its ID */
   const sendNew = async (text: string, parseMode?: "HTML") => {
