@@ -42,6 +42,7 @@ function escapeHtml(text: string) {
 const mainKeyboard = new Keyboard()
   .text("Projects").text("History").row()
   .text("Stop").text("New").row()
+  .text("Compose").row()
   .resized().persistent()
 
 /** Extract reply-to-message text and prepend it as context (skip bot's own messages) */
@@ -101,6 +102,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     History: "/history",
     Stop: "/stop",
     New: "/new",
+    Compose: "/compose",
   }
   bot.use((ctx, next) => {
     const text = ctx.message?.text
