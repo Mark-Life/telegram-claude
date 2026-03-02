@@ -5,9 +5,11 @@ import { runClaude, stopClaude, hasActiveProcess } from "./claude"
 import { streamToTelegram } from "./telegram"
 import { transcribeAudio } from "./transcribe"
 import { listAllSessions, getSessionProject } from "./history"
-import { getGitHubUrl, getCurrentBranch, listBranches, listOpenPRs } from "./git"
+import { getGitHubUrl, getCurrentBranch, listBranches, listOpenPRs, createWorktree, removeWorktree } from "./git"
 
-type QueuedMessage = { prompt: string; ctx: Context }
+type QueuedMessage = { prompt: string; ctx: Context; targetCwd: string }
+
+type WorktreeInfo = { path: string; branch: string; projectPath: string }
 
 type PendingPlan = {
   planPath: string
@@ -17,6 +19,8 @@ type PendingPlan = {
 
 type UserState = {
   activeProject: string
+  activeWorktree?: string
+  worktrees: Map<string, WorktreeInfo>
   sessions: Map<string, string>
   queue: QueuedMessage[]
   queueStatusMessageId?: number
@@ -33,8 +37,9 @@ function escapeHtml(text: string) {
 
 /** Persistent reply keyboard with all commands */
 const mainKeyboard = new Keyboard()
-  .text("Projects").text("History").row()
-  .text("Stop").text("New").row()
+  .text("Projects").text("Worktrees").row()
+  .text("History").text("New").row()
+  .text("Stop").row()
   .resized().persistent()
 
 /** Extract reply-to-message text and prepend it as context (skip bot's own messages) */
@@ -50,10 +55,19 @@ function buildPromptWithReplyContext(ctx: Context, userText: string, botId?: num
 function getState(userId: number): UserState {
   let state = userStates.get(userId)
   if (!state) {
-    state = { activeProject: "", sessions: new Map(), queue: [] }
+    state = { activeProject: "", worktrees: new Map(), sessions: new Map(), queue: [] }
     userStates.set(userId, state)
   }
   return state
+}
+
+/** Get the effective working directory: worktree path if active, else activeProject */
+function getEffectiveCwd(state: UserState) {
+  if (state.activeWorktree) {
+    const wt = state.worktrees.get(state.activeWorktree)
+    if (wt) return wt.path
+  }
+  return state.activeProject
 }
 
 /** List project directories */
@@ -91,6 +105,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
 
   const buttonToCommand: Record<string, string> = {
     Projects: "/projects",
+    Worktrees: "/wt",
     History: "/history",
     Stop: "/stop",
     New: "/new",
@@ -144,6 +159,8 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const state = getState(ctx.from!.id)
     const chatId = ctx.chat!.id
     state.activeProject = fullPath
+    state.activeWorktree = undefined
+    state.worktrees.clear()
     state.queue = []
     state.pendingPlan = undefined
     await cleanupQueueStatus(state, ctx)
@@ -175,17 +192,21 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
   })
 
   bot.command("status", async (ctx) => {
-    const state = getState(ctx.from!.id)
+    const userId = ctx.from!.id
+    const state = getState(userId)
     const project = state.activeProject
       ? state.activeProject === projectsDir ? "general" : basename(state.activeProject)
       : "(none)"
-    const running = hasActiveProcess(ctx.from!.id) ? "Yes" : "No"
+    const effectiveCwd = getEffectiveCwd(state)
+    const running = hasActiveProcess(userId, effectiveCwd) ? "Yes" : "No"
     const sessionCount = state.sessions.size
-    const branch = state.activeProject && state.activeProject !== projectsDir ? getCurrentBranch(state.activeProject) : null
+    const branch = effectiveCwd && effectiveCwd !== projectsDir ? getCurrentBranch(effectiveCwd) : null
     const branchLine = branch ? `\nBranch: ${branch}` : ""
     const queueLine = state.queue.length > 0 ? `\nQueued: ${state.queue.length}` : ""
+    const wtLine = state.activeWorktree ? `\nWorktree: ${state.activeWorktree}` : ""
+    const wtCountLine = state.worktrees.size > 0 ? `\nWorktrees: ${state.worktrees.size}` : ""
 
-    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}${queueLine}`, { reply_markup: mainKeyboard })
+    await ctx.reply(`Project: ${project}${wtLine}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}${queueLine}${wtCountLine}`, { reply_markup: mainKeyboard })
   })
 
   bot.command("help", async (ctx) => {
@@ -197,6 +218,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
         "/new — start fresh conversation",
         "/stop — kill active process",
         "/status — show current state",
+        "/wt — manage git worktrees",
         "/branch — show current git branch",
         "/pr — list open pull requests",
         "/help — show this message",
@@ -261,12 +283,152 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     await ctx.reply(lines.join("\n"), { parse_mode: "HTML", reply_markup: mainKeyboard })
   })
 
+  const MAX_WORKTREES = 5
+  const WORKTREES_BASE = join(projectsDir, ".worktrees")
+  const VALID_WT_NAME = /^[a-zA-Z0-9._-]+$/
+
+  bot.command("wt", async (ctx) => {
+    const userId = ctx.from!.id
+    const state = getState(userId)
+    const args = ctx.message?.text?.split(/\s+/).slice(1) ?? []
+    const sub = args[0]
+
+    if (!state.activeProject || state.activeProject === projectsDir) {
+      await ctx.reply("Worktrees require a git project.", { reply_markup: mainKeyboard })
+      return
+    }
+
+    if (!sub) {
+      // List worktrees
+      if (state.worktrees.size === 0) {
+        await ctx.reply("No active worktrees.\nUse /wt new [name] to create one.", { reply_markup: mainKeyboard })
+        return
+      }
+      const keyboard = new InlineKeyboard()
+      for (const [name, wt] of state.worktrees) {
+        const active = state.activeWorktree === name ? " *" : ""
+        keyboard.text(`${name} [${wt.branch}]${active}`, `wt_switch:${name}`)
+          .text("Remove", `wt_rm:${name}`).row()
+      }
+      keyboard.text("Back to main", "wt_switch:__main__").row()
+      await ctx.reply("Worktrees:", { reply_markup: keyboard })
+      return
+    }
+
+    if (sub === "new") {
+      const name = args[1] || `task-${Date.now()}`
+      if (!VALID_WT_NAME.test(name)) {
+        await ctx.reply("Invalid name. Use alphanumeric, hyphens, underscores, dots only.", { reply_markup: mainKeyboard })
+        return
+      }
+      if (state.worktrees.size >= MAX_WORKTREES) {
+        await ctx.reply(`Max ${MAX_WORKTREES} worktrees. Remove one first.`, { reply_markup: mainKeyboard })
+        return
+      }
+      const worktreePath = join(WORKTREES_BASE, basename(state.activeProject), name)
+      const branchName = `wt/${name}`
+      try {
+        createWorktree(state.activeProject, worktreePath, branchName)
+      } catch (e) {
+        await ctx.reply(`Failed to create worktree: ${e instanceof Error ? e.message : "unknown error"}`, { reply_markup: mainKeyboard })
+        return
+      }
+      state.worktrees.set(name, { path: worktreePath, branch: branchName, projectPath: state.activeProject })
+      state.activeWorktree = name
+      await ctx.reply(`Worktree <b>${escapeHtml(name)}</b> created on branch <code>${escapeHtml(branchName)}</code>`, { parse_mode: "HTML", reply_markup: mainKeyboard })
+      return
+    }
+
+    if (sub === "rm") {
+      const name = args[1]
+      if (!name) {
+        await ctx.reply("Usage: /wt rm <name>", { reply_markup: mainKeyboard })
+        return
+      }
+      const wt = state.worktrees.get(name)
+      if (!wt) {
+        await ctx.reply(`Worktree "${name}" not found.`, { reply_markup: mainKeyboard })
+        return
+      }
+      stopClaude(userId, wt.path)
+      state.queue = state.queue.filter((q) => q.targetCwd !== wt.path)
+      try { removeWorktree(wt.projectPath, wt.path) } catch {}
+      state.worktrees.delete(name)
+      if (state.activeWorktree === name) state.activeWorktree = undefined
+      state.sessions.delete(wt.path)
+      await ctx.reply(`Worktree "${name}" removed.`, { reply_markup: mainKeyboard })
+      return
+    }
+
+    if (sub === "switch") {
+      const name = args[1]
+      if (!name) {
+        await ctx.reply("Usage: /wt switch <name>", { reply_markup: mainKeyboard })
+        return
+      }
+      if (name === "main") {
+        state.activeWorktree = undefined
+        await ctx.reply("Switched back to main project directory.", { reply_markup: mainKeyboard })
+        return
+      }
+      const wt = state.worktrees.get(name)
+      if (!wt) {
+        await ctx.reply(`Worktree "${name}" not found.`, { reply_markup: mainKeyboard })
+        return
+      }
+      state.activeWorktree = name
+      await ctx.reply(`Switched to worktree <b>${escapeHtml(name)}</b> [<code>${escapeHtml(wt.branch)}</code>]`, { parse_mode: "HTML", reply_markup: mainKeyboard })
+      return
+    }
+
+    await ctx.reply("Usage: /wt [new|rm|switch] [name]", { reply_markup: mainKeyboard })
+  })
+
+  bot.callbackQuery(/^wt_switch:(.+)$/, async (ctx) => {
+    const name = ctx.match![1]
+    const state = getState(ctx.from.id)
+    if (name === "__main__") {
+      state.activeWorktree = undefined
+      await ctx.answerCallbackQuery({ text: "Switched to main" })
+      await ctx.editMessageText("Switched back to main project directory.")
+      return
+    }
+    const wt = state.worktrees.get(name)
+    if (!wt) {
+      await ctx.answerCallbackQuery({ text: "Worktree not found" })
+      return
+    }
+    state.activeWorktree = name
+    await ctx.answerCallbackQuery({ text: `Switched to ${name}` })
+    await ctx.editMessageText(`Active worktree: ${name} [${wt.branch}]`)
+  })
+
+  bot.callbackQuery(/^wt_rm:(.+)$/, async (ctx) => {
+    const name = ctx.match![1]
+    const userId = ctx.from.id
+    const state = getState(userId)
+    const wt = state.worktrees.get(name)
+    if (!wt) {
+      await ctx.answerCallbackQuery({ text: "Worktree not found" })
+      return
+    }
+    stopClaude(userId, wt.path)
+    state.queue = state.queue.filter((q) => q.targetCwd !== wt.path)
+    try { removeWorktree(wt.projectPath, wt.path) } catch {}
+    state.worktrees.delete(name)
+    if (state.activeWorktree === name) state.activeWorktree = undefined
+    state.sessions.delete(wt.path)
+    await ctx.answerCallbackQuery({ text: `Removed ${name}` })
+    await ctx.editMessageText(`Worktree "${name}" removed.`)
+  })
+
   bot.command("new", async (ctx) => {
     const state = getState(ctx.from!.id)
     if (!state.activeProject) {
       state.activeProject = projectsDir
     }
-    state.sessions.delete(state.activeProject)
+    const effectiveCwd = getEffectiveCwd(state)
+    state.sessions.delete(effectiveCwd)
     state.queue = []
     state.pendingPlan = undefined
     await cleanupQueueStatus(state, ctx)
@@ -389,7 +551,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     state.pendingPlan = {
       planPath,
       sessionId: result.sessionId,
-      projectPath: state.activeProject,
+      projectPath: getEffectiveCwd(state),
     }
 
     const maxLen = 4000
@@ -425,14 +587,13 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       return
     }
 
-    state.activeProject = plan.projectPath
     state.sessions.delete(plan.projectPath)
     state.pendingPlan = undefined
     await ctx.answerCallbackQuery({ text: "Executing plan (new session)..." })
     await ctx.editMessageText("Executing plan (new session)...")
 
     const prompt = `Execute the following plan. Do not re-enter plan mode.\n\n${planContent}`
-    runAndDrain(ctx, prompt, state, userId).catch((e) => console.error("plan_new error:", e))
+    runAndDrain(ctx, prompt, state, userId, plan.projectPath).catch((e) => console.error("plan_new error:", e))
   })
 
   bot.callbackQuery(/^plan_resume:(\d+)$/, async (ctx) => {
@@ -444,7 +605,6 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       return
     }
 
-    state.activeProject = plan.projectPath
     if (plan.sessionId) {
       state.sessions.set(plan.projectPath, plan.sessionId)
     }
@@ -453,7 +613,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     await ctx.editMessageText("Executing plan (keeping context)...")
 
     const prompt = "The plan has been approved. Proceed with execution. Do not re-enter plan mode."
-    runAndDrain(ctx, prompt, state, userId).catch((e) => console.error("plan_resume error:", e))
+    runAndDrain(ctx, prompt, state, userId, plan.projectPath).catch((e) => console.error("plan_resume error:", e))
   })
 
   bot.callbackQuery(/^plan_modify:(\d+)$/, async (ctx) => {
@@ -494,56 +654,61 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
 
     const userId = ctx.from!.id
+    const effectiveCwd = getEffectiveCwd(state)
 
     if (state.pendingPlan) {
       const plan = state.pendingPlan
-      state.activeProject = plan.projectPath
       if (plan.sessionId) {
         state.sessions.set(plan.projectPath, plan.sessionId)
       }
       state.pendingPlan = undefined
       const feedbackPrompt = `Plan feedback from user: ${prompt}\n\nRevise the plan based on this feedback. Do not execute yet — present the updated plan.`
-      await runAndDrain(ctx, feedbackPrompt, state, userId)
+      await runAndDrain(ctx, feedbackPrompt, state, userId, plan.projectPath)
       return
     }
 
-    if (hasActiveProcess(userId)) {
-      state.queue.push({ prompt, ctx })
+    if (hasActiveProcess(userId, effectiveCwd)) {
+      state.queue.push({ prompt, ctx, targetCwd: effectiveCwd })
       await sendOrUpdateQueueStatus(ctx, state)
       return
     }
 
-    await runAndDrain(ctx, prompt, state, userId)
+    await runAndDrain(ctx, prompt, state, userId, effectiveCwd)
   }
 
   /** Run a Claude prompt and drain any queued messages afterward */
-  async function runAndDrain(ctx: Context, prompt: string, state: UserState, userId: number) {
+  async function runAndDrain(ctx: Context, prompt: string, state: UserState, userId: number, effectiveCwd?: string) {
     let currentCtx = ctx
     let currentPrompt = prompt
+    let cwd = effectiveCwd ?? getEffectiveCwd(state)
     while (true) {
-      const sessionId = state.sessions.get(state.activeProject)
-      const projectName = state.activeProject === projectsDir ? "general" : basename(state.activeProject)
-      const branchName = state.activeProject !== projectsDir ? getCurrentBranch(state.activeProject) : null
+      const sessionId = state.sessions.get(cwd)
+      const wtEntry = [...state.worktrees.values()].find((w) => w.path === cwd)
+      const projectName = wtEntry
+        ? `${basename(wtEntry.projectPath)}/${basename(cwd)}`
+        : cwd === projectsDir ? "general" : basename(cwd)
+      const branchName = cwd !== projectsDir ? getCurrentBranch(cwd) : null
       try {
-        const events = runClaude(userId, currentPrompt, state.activeProject, currentCtx.chat!.id, sessionId)
+        const events = runClaude(userId, currentPrompt, cwd, currentCtx.chat!.id, sessionId)
         const result = await streamToTelegram(currentCtx, events, projectName, { branchName })
         if (result.sessionId) {
-          state.sessions.set(state.activeProject, result.sessionId)
+          state.sessions.set(cwd, result.sessionId)
         }
         if (result.planPath) {
-          stopClaude(userId)
+          stopClaude(userId, cwd)
           await presentPlan(currentCtx, userId, state, result)
           return
         }
       } catch (e) {
         console.error("runAndDrain error:", e)
       }
-      if (state.queue.length === 0) break
-      const next = state.queue.shift()!
+      const idx = state.queue.findIndex((q) => q.targetCwd === cwd)
+      if (idx === -1) break
+      const next = state.queue.splice(idx, 1)[0]
       currentPrompt = next.prompt
       currentCtx = next.ctx
       if (state.queue.length === 0) await cleanupQueueStatus(state, currentCtx)
-      const remaining = state.queue.length
+      const remaining = state.queue.filter((q) => q.targetCwd === cwd).length
       const queueInfo = remaining > 0 ? ` | ${remaining} more in queue` : ""
       const preview = currentPrompt.length > 200 ? currentPrompt.slice(0, 200) + "..." : currentPrompt
       await currentCtx.reply(`<b>▶ Processing queued message</b>${queueInfo}\n<pre>${escapeHtml(preview)}</pre>`, { parse_mode: "HTML" }).catch(() => {})
@@ -624,7 +789,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const res = await fetch(url)
     const buffer = Buffer.from(await res.arrayBuffer())
 
-    const dir = join(state.activeProject, "user-sent-files")
+    const dir = join(getEffectiveCwd(state), "user-sent-files")
     mkdirSync(dir, { recursive: true })
     const dest = join(dir, basename(filename))
     writeFileSync(dest, buffer)

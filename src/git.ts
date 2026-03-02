@@ -48,6 +48,16 @@ export function listBranches(projectPath: string) {
   }
 }
 
+/** Create a new git worktree with a new branch */
+export function createWorktree(projectPath: string, worktreePath: string, branchName: string) {
+  execSync(`git worktree add -b "${branchName}" "${worktreePath}"`, { cwd: projectPath, timeout: 10000 })
+}
+
+/** Remove a git worktree */
+export function removeWorktree(projectPath: string, worktreePath: string) {
+  execSync(`git worktree remove "${worktreePath}" --force`, { cwd: projectPath, timeout: 10000 })
+}
+
 /** List open PRs for a project directory via gh CLI, or null on error */
 export function listOpenPRs(projectPath: string) {
   try {
