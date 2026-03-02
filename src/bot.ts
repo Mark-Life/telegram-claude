@@ -602,6 +602,49 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
   }
 
+  /** Collect a message into compose queue based on its type */
+  async function collectComposeMessage(ctx: Context, state: UserState) {
+    const messages = state.composeMessages!
+    try {
+      if (ctx.message?.voice) {
+        const file = await ctx.getFile()
+        const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`
+        const res = await fetch(url)
+        const buffer = Buffer.from(await res.arrayBuffer())
+        const transcription = await transcribeAudio(buffer, "voice.ogg")
+        messages.push({ type: "voice", content: transcription })
+      } else if (ctx.message?.document) {
+        const doc = ctx.message.document
+        const filename = doc.file_name ?? `file_${Date.now()}`
+        const dest = await saveUploadedFile(ctx, filename)
+        const caption = ctx.message.caption ?? ""
+        messages.push({ type: "file", content: `[File: ${filename} saved at ${dest}]\n${caption}`.trim() })
+      } else if (ctx.message?.photo) {
+        const photos = ctx.message.photo
+        const largest = photos[photos.length - 1]
+        const filename = `photo_${Date.now()}.jpg`
+        const dest = await saveUploadedFile(ctx, filename, largest.file_id)
+        const caption = ctx.message.caption ?? ""
+        messages.push({ type: "photo", content: `[Photo saved at ${dest}]\n${caption}`.trim() })
+      } else if (ctx.message?.forward_origin) {
+        const origin = ctx.message.forward_origin
+        let senderName = "unknown"
+        if (origin.type === "user") senderName = origin.sender_user.first_name
+        else if (origin.type === "channel") senderName = origin.chat.title
+        else if (origin.type === "hidden_user") senderName = origin.sender_user_name
+        const text = ctx.message.text ?? ctx.message.caption ?? ""
+        messages.push({ type: "forwarded", content: `[Forwarded from ${senderName}]\n${text}` })
+      } else if (ctx.message?.text) {
+        messages.push({ type: "text", content: ctx.message.text })
+      }
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : "unknown error"
+      await ctx.reply(`Error collecting message: ${errMsg}`).catch(() => {})
+      return
+    }
+    await updateComposeStatus(ctx, state)
+  }
+
   bot.on("message:text", (ctx) => {
     const prompt = buildPromptWithReplyContext(ctx, ctx.message.text, botId)
     handlePrompt(ctx, prompt).catch((e) => console.error("handlePrompt error:", e))
