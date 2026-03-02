@@ -86,12 +86,20 @@ function buildPromptWithReplyContext(
   return `[Replying to: ${truncated}]\n\n${userText}`;
 }
 
+/** Extract user ID from context (safe after access-control middleware) */
+function getUserId(ctx: Context) {
+  if (!ctx.from) {
+    throw new Error("No user context");
+  }
+  return ctx.from.id;
+}
+
 /** Get or create user state */
-function getState(userId: number): UserState {
-  let state = userStates.get(userId);
+function getState(id: number): UserState {
+  let state = userStates.get(id);
   if (!state) {
     state = { activeProject: "", sessions: new Map(), queue: [] };
-    userStates.set(userId, state);
+    userStates.set(id, state);
   }
   return state;
 }
@@ -158,7 +166,7 @@ export function createBot(
 
   // Compose mode interceptor: capture non-command messages when composing
   bot.on("message", async (ctx, next) => {
-    const state = getState(ctx.from?.id);
+    const state = getState(ctx.from.id);
     if (!state.composeMessages) {
       return next();
     }
@@ -169,7 +177,7 @@ export function createBot(
   });
 
   bot.command("start", async (ctx) => {
-    const state = getState(ctx.from?.id);
+    const state = getState(getUserId(ctx));
     const project = state.activeProject || "(none)";
     await ctx.reply(
       `Claude Code bot ready.\nActive project: ${project}\n\nCommands:\n/projects - switch project\n/history - resume a past session\n/stop - kill active process\n/status - current state\n/new - reset session`,
@@ -209,8 +217,8 @@ export function createBot(
       }
     }
 
-    const state = getState(ctx.from?.id);
-    const chatId = ctx.chat?.id;
+    const state = getState(ctx.from.id);
+    const chatId = ctx.chat!.id;
     state.activeProject = fullPath;
     state.queue = [];
     state.pendingPlan = undefined;
@@ -241,7 +249,7 @@ export function createBot(
   });
 
   bot.command("stop", async (ctx) => {
-    const userId = ctx.from?.id;
+    const userId = getUserId(ctx);
     const state = getState(userId);
     const stopped = stopClaude(userId);
     const hadQueue = state.queue.length > 0;
@@ -257,13 +265,13 @@ export function createBot(
   });
 
   bot.command("status", async (ctx) => {
-    const state = getState(ctx.from?.id);
+    const state = getState(getUserId(ctx));
     const project = state.activeProject
       ? state.activeProject === projectsDir
         ? "general"
         : basename(state.activeProject)
       : "(none)";
-    const running = hasActiveProcess(ctx.from?.id) ? "Yes" : "No";
+    const running = hasActiveProcess(getUserId(ctx)) ? "Yes" : "No";
     const sessionCount = state.sessions.size;
     const branch =
       state.activeProject && state.activeProject !== projectsDir
@@ -305,7 +313,7 @@ export function createBot(
   });
 
   bot.command("branch", async (ctx) => {
-    const state = getState(ctx.from?.id);
+    const state = getState(getUserId(ctx));
     if (!state.activeProject || state.activeProject === projectsDir) {
       await ctx.reply("No project selected or in general mode.", {
         reply_markup: mainKeyboard,
@@ -348,7 +356,7 @@ export function createBot(
   });
 
   bot.command("pr", async (ctx) => {
-    const state = getState(ctx.from?.id);
+    const state = getState(getUserId(ctx));
     if (!state.activeProject || state.activeProject === projectsDir) {
       await ctx.reply("No project selected or in general mode.", {
         reply_markup: mainKeyboard,
@@ -379,7 +387,7 @@ export function createBot(
   });
 
   bot.command("new", async (ctx) => {
-    const state = getState(ctx.from?.id);
+    const state = getState(getUserId(ctx));
     if (!state.activeProject) {
       state.activeProject = projectsDir;
     }
@@ -396,7 +404,7 @@ export function createBot(
   });
 
   bot.command("compose", async (ctx) => {
-    const state = getState(ctx.from?.id);
+    const state = getState(getUserId(ctx));
     if (state.composeMessages) {
       await ctx.reply(
         `Already composing (${state.composeMessages.length} messages). /send when done.`
@@ -405,8 +413,8 @@ export function createBot(
     }
     state.composeMessages = [];
     const keyboard = new InlineKeyboard()
-      .text("Send", `compose_send:${ctx.from?.id}`)
-      .text("Cancel", `compose_cancel:${ctx.from?.id}`);
+      .text("Send", `compose_send:${getUserId(ctx)}`)
+      .text("Cancel", `compose_cancel:${getUserId(ctx)}`);
     const msg = await ctx.reply(
       "Compose mode. Send messages — /send when done.",
       { reply_markup: keyboard }
@@ -451,12 +459,12 @@ export function createBot(
   }
 
   bot.command("send", async (ctx) => {
-    const state = getState(ctx.from?.id);
+    const state = getState(getUserId(ctx));
     await executeSend(ctx, state);
   });
 
   bot.command("cancel", async (ctx) => {
-    const state = getState(ctx.from?.id);
+    const state = getState(getUserId(ctx));
     await executeCancel(ctx, state);
   });
 
@@ -554,7 +562,7 @@ export function createBot(
 
   bot.callbackQuery(/^session:(.+)$/, async (ctx) => {
     const sessionId = ctx.match?.[1];
-    const state = getState(ctx.from?.id);
+    const state = getState(ctx.from.id);
 
     const cachedProject = getSessionProject(sessionId);
     if (cachedProject) {
@@ -567,7 +575,7 @@ export function createBot(
     }
 
     state.sessions.set(state.activeProject, sessionId);
-    const chatId = ctx.chat?.id;
+    const chatId = ctx.chat!.id;
     const projectName = basename(state.activeProject);
     await ctx.answerCallbackQuery({ text: "Session resumed" });
     const msg = await ctx.editMessageText(
@@ -636,7 +644,7 @@ export function createBot(
         ? `${planContent.slice(0, maxLen)}\n... (truncated)`
         : planContent;
 
-    await ctx.api.sendMessage(ctx.chat?.id, display);
+    await ctx.api.sendMessage(ctx.chat!.id, display);
 
     const keyboard = new InlineKeyboard()
       .text("Execute (new session)", `plan_new:${userId}`)
@@ -646,7 +654,7 @@ export function createBot(
       .text("Modify plan", `plan_modify:${userId}`);
 
     await ctx.api.sendMessage(
-      ctx.chat?.id,
+      ctx.chat!.id,
       "Plan ready. How would you like to proceed?",
       { reply_markup: keyboard }
     );
@@ -747,7 +755,8 @@ export function createBot(
 
   /** Send a prompt to Claude and stream the response */
   async function handlePrompt(ctx: Context, prompt: string) {
-    const state = getState(ctx.from?.id);
+    const userId = getUserId(ctx);
+    const state = getState(userId);
 
     if (!state.activeProject) {
       state.activeProject = projectsDir;
@@ -755,8 +764,6 @@ export function createBot(
         reply_markup: mainKeyboard,
       });
     }
-
-    const userId = ctx.from?.id;
 
     if (state.pendingPlan) {
       const plan = state.pendingPlan;
@@ -803,7 +810,7 @@ export function createBot(
           userId,
           currentPrompt,
           state.activeProject,
-          currentCtx.chat?.id,
+          currentCtx.chat!.id,
           sessionId
         );
         const result = await streamToTelegram(currentCtx, events, projectName, {
@@ -853,7 +860,7 @@ export function createBot(
       .text("Clear Queue", `clear_queue:${ctx.from?.id}`);
     if (state.queueStatusMessageId) {
       await ctx.api
-        .editMessageText(ctx.chat?.id, state.queueStatusMessageId, text, {
+        .editMessageText(ctx.chat!.id, state.queueStatusMessageId, text, {
           reply_markup: keyboard,
         })
         .catch(() => {});
@@ -867,7 +874,7 @@ export function createBot(
   async function cleanupQueueStatus(state: UserState, ctx: Context) {
     if (state.queueStatusMessageId) {
       await ctx.api
-        .deleteMessage(ctx.chat?.id, state.queueStatusMessageId)
+        .deleteMessage(ctx.chat!.id, state.queueStatusMessageId)
         .catch(() => {});
       state.queueStatusMessageId = undefined;
     }
@@ -882,7 +889,7 @@ export function createBot(
       .text("Cancel", `compose_cancel:${ctx.from?.id}`);
     if (state.composeStatusMessageId) {
       await ctx.api
-        .editMessageText(ctx.chat?.id, state.composeStatusMessageId, text, {
+        .editMessageText(ctx.chat!.id, state.composeStatusMessageId, text, {
           reply_markup: keyboard,
         })
         .catch(() => {});
@@ -896,7 +903,7 @@ export function createBot(
   async function cleanupComposeStatus(state: UserState, ctx: Context) {
     if (state.composeStatusMessageId) {
       await ctx.api
-        .deleteMessage(ctx.chat?.id, state.composeStatusMessageId)
+        .deleteMessage(ctx.chat!.id, state.composeStatusMessageId)
         .catch(() => {});
       state.composeStatusMessageId = undefined;
     }
@@ -921,7 +928,7 @@ export function createBot(
             ? `${transcription.slice(0, maxDisplay)}... (truncated)`
             : transcription;
         await ctx.api.editMessageText(
-          ctx.chat?.id,
+          ctx.chat!.id,
           status.message_id,
           `<blockquote>${escapeHtml(displayText)}</blockquote>`,
           { parse_mode: "HTML" }
@@ -938,7 +945,7 @@ export function createBot(
         });
       } else if (ctx.message?.photo) {
         const photos = ctx.message.photo;
-        const largest = photos.at(-1);
+        const largest = photos.at(-1)!;
         const filename = `photo_${Date.now()}.jpg`;
         const dest = await saveUploadedFile(ctx, filename, largest.file_id);
         const caption = ctx.message.caption ?? "";
@@ -980,7 +987,7 @@ export function createBot(
   });
 
   bot.on("message:voice", async (ctx) => {
-    const state = getState(ctx.from?.id);
+    const state = getState(ctx.from.id);
 
     if (!state.activeProject) {
       state.activeProject = projectsDir;
@@ -1031,7 +1038,7 @@ export function createBot(
     filename: string,
     fileId?: string
   ) {
-    const state = getState(ctx.from?.id);
+    const state = getState(getUserId(ctx));
     if (!state.activeProject) {
       state.activeProject = projectsDir;
       await ctx.reply("No project selected. Using General (all projects).", {
@@ -1077,7 +1084,7 @@ export function createBot(
 
   bot.on("message:photo", async (ctx) => {
     const photos = ctx.message.photo;
-    const largest = photos.at(-1);
+    const largest = photos.at(-1)!;
     const filename = `photo_${Date.now()}.jpg`;
 
     try {

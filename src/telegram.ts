@@ -216,7 +216,7 @@ export async function streamToTelegram(
   projectName: string,
   options?: StreamOptions
 ): Promise<StreamResult> {
-  const chatId = ctx.chat?.id;
+  const chatId = ctx.chat!.id;
   const branchName = options?.branchName;
   const result: StreamResult = {};
 
