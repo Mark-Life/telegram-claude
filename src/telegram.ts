@@ -199,8 +199,9 @@ export async function streamToTelegram(
   const flushText = async (final = false) => {
     if (!accumulated) return
 
+    const interval = useDrafts ? DRAFT_INTERVAL_MS : EDIT_INTERVAL_MS
     const now = Date.now()
-    if (!final && now - lastEditTime < EDIT_INTERVAL_MS) {
+    if (!final && now - lastEditTime < interval) {
       pendingEdit = true
       return
     }
@@ -214,12 +215,20 @@ export async function streamToTelegram(
       const chunk = text.slice(0, splitAt)
       accumulated = text.slice(splitAt)
 
-      await safeEditMessage(ctx, chatId, messageId, markdownToTelegramHtml(chunk), chunk)
-      await sendNew("...")
+      if (useDrafts) {
+        await safeSendMessage(ctx, chatId, markdownToTelegramHtml(chunk), chunk)
+      } else {
+        await safeEditMessage(ctx, chatId, messageId, markdownToTelegramHtml(chunk), chunk)
+        await sendNew("...")
+      }
       text = accumulated
     }
 
-    await safeEditMessage(ctx, chatId, messageId, markdownToTelegramHtml(text), text)
+    if (useDrafts) {
+      await safeSendDraft(ctx, chatId, draftId, markdownToTelegramHtml(text), text)
+    } else {
+      await safeEditMessage(ctx, chatId, messageId, markdownToTelegramHtml(text), text)
+    }
   }
 
   /** Update the tools message with current tool lines */
@@ -249,8 +258,9 @@ export async function streamToTelegram(
   const flushThinking = async (final = false) => {
     if (!thinkingText) return
 
+    const interval = useDrafts ? DRAFT_INTERVAL_MS : EDIT_INTERVAL_MS
     const now = Date.now()
-    if (!final && now - lastEditTime < EDIT_INTERVAL_MS) {
+    if (!final && now - lastEditTime < interval) {
       pendingEdit = true
       return
     }
@@ -258,14 +268,23 @@ export async function streamToTelegram(
     lastEditTime = now
 
     const { html, plainText } = renderThinkingHtml(thinkingText)
-    await safeEditMessage(ctx, chatId, messageId, html, plainText)
+    if (useDrafts) {
+      await safeSendDraft(ctx, chatId, draftId, html, plainText)
+    } else {
+      await safeEditMessage(ctx, chatId, messageId, html, plainText)
+    }
   }
 
   /** Switch to a new mode, finalizing the previous one */
   const switchMode = async (newMode: MessageMode) => {
     if (mode === "text" && accumulated) {
-      await flushText(true)
-      lastTextMessageId = messageId
+      if (useDrafts) {
+        const sent = await safeSendMessage(ctx, chatId, markdownToTelegramHtml(accumulated), accumulated)
+        lastTextMessageId = sent?.message_id ?? 0
+      } else {
+        await flushText(true)
+        lastTextMessageId = messageId
+      }
     }
     if (mode === "tools") {
       await flushTools()
@@ -282,7 +301,7 @@ export async function streamToTelegram(
   const editTimer = setInterval(async () => {
     if (pendingEdit && mode === "text") await flushText().catch(() => {})
     if (pendingEdit && mode === "thinking") await flushThinking().catch(() => {})
-  }, EDIT_INTERVAL_MS)
+  }, DRAFT_INTERVAL_MS)
 
   const typingTimer = setInterval(() => {
     ctx.api.sendChatAction(chatId, "typing").catch(() => {})
@@ -294,7 +313,17 @@ export async function streamToTelegram(
       if (event.kind === "text_delta") {
         if (mode !== "text") {
           await switchMode("text")
-          await sendNew("...")
+          if (useDrafts === null) {
+            try {
+              await ctx.api.sendMessageDraft(chatId, draftId, "...", { parse_mode: "HTML" })
+              useDrafts = true
+            } catch {
+              useDrafts = false
+              await sendNew("...")
+            }
+          } else if (!useDrafts) {
+            await sendNew("...")
+          }
         }
         accumulated += event.text
         await flushText().catch(() => {})
@@ -308,11 +337,19 @@ export async function streamToTelegram(
         await flushTools().catch(() => {})
       } else if (event.kind === "thinking_start") {
         await switchMode("thinking")
-        await sendNew("<i>Thinking...</i>", "HTML")
+        if (useDrafts) {
+          await safeSendDraft(ctx, chatId, draftId, "<i>Thinking...</i>", "Thinking...")
+        } else {
+          await sendNew("<i>Thinking...</i>", "HTML")
+        }
       } else if (event.kind === "thinking_delta") {
         if (mode !== "thinking") {
           await switchMode("thinking")
-          await sendNew("<i>Thinking...</i>", "HTML")
+          if (useDrafts) {
+            await safeSendDraft(ctx, chatId, draftId, "<i>Thinking...</i>", "Thinking...")
+          } else {
+            await sendNew("<i>Thinking...</i>", "HTML")
+          }
         }
         thinkingText += event.text
         await flushThinking().catch(() => {})
@@ -335,14 +372,14 @@ export async function streamToTelegram(
         if (!accumulated && event.text) {
           if (mode !== "text") {
             await switchMode("text")
-            await sendNew("...")
+            if (!useDrafts) await sendNew("...")
           }
           accumulated = event.text
         }
       } else if (event.kind === "error") {
         if (mode !== "text") {
           await switchMode("text")
-          await sendNew("...")
+          if (!useDrafts) await sendNew("...")
         }
         accumulated += `\n\n[Error: ${event.message}]`
       }
@@ -354,20 +391,24 @@ export async function streamToTelegram(
 
   // Final edit on the last text message with footer
   if (mode === "text" && accumulated) {
-    lastTextMessageId = messageId
+    if (!useDrafts) lastTextMessageId = messageId
   }
 
-  if (lastTextMessageId && accumulated) {
+  if (useDrafts && accumulated) {
+    const html = markdownToTelegramHtml(accumulated)
+    const footer = formatFooter(projectName, result, branchName)
+    const display = footer ? `${html}\n\n${footer}` : html
+    const sent = await safeSendMessage(ctx, chatId, display || "...", accumulated)
+    lastTextMessageId = sent?.message_id ?? 0
+  } else if (!useDrafts && lastTextMessageId && accumulated) {
     const html = markdownToTelegramHtml(accumulated)
     const footer = formatFooter(projectName, result, branchName)
     const display = footer ? `${html}\n\n${footer}` : html
     const ok = await safeEditMessage(ctx, chatId, lastTextMessageId, display || "...").catch(() => false)
     if (!ok && footer) {
-      // HTML with footer failed — keep existing styled message, send footer separately
       await ctx.api.sendMessage(chatId, footer, { parse_mode: "HTML" }).catch(() => {})
     }
   } else if (!lastTextMessageId && (result.cost !== undefined || result.durationMs !== undefined)) {
-    // No text message was sent -- send footer as standalone
     const footer = formatFooter(projectName, result, branchName)
     if (footer) await ctx.api.sendMessage(chatId, footer, { parse_mode: "HTML" }).catch(() => {})
   }
