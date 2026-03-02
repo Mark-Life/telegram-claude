@@ -23,7 +23,7 @@
         "useAwait": "warn"
       },
       "style": {
-        "noMagicNumbers": "warn",
+        "noMagicNumbers": "off",
         "noNonNullAssertion": "warn",
         "noNestedTernary": "warn",
         "useConsistentTypeDefinitions": {
