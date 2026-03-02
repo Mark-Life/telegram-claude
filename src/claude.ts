@@ -34,6 +34,7 @@ type StreamEvent =
     }
 
 export type ClaudeEvent =
+  | { kind: "session_init"; sessionId: string }
   | { kind: "text_delta"; text: string }
   | { kind: "tool_use"; name: string; input: string }
   | { kind: "thinking_start" }
@@ -153,6 +154,8 @@ function createStreamParser() {
           yield { kind: "thinking_done", durationMs: elapsed }
         }
         currentBlockType = null
+      } else if (parsed.type === "system" && parsed.subtype === "init") {
+        yield { kind: "session_init", sessionId: parsed.session_id }
       } else if (parsed.type === "result") {
         yield {
           kind: "result",
