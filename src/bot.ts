@@ -701,7 +701,15 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
         const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`
         const res = await fetch(url)
         const buffer = Buffer.from(await res.arrayBuffer())
+        const status = await ctx.reply("Transcribing...", {
+          reply_parameters: { message_id: ctx.message.message_id },
+        })
         const transcription = await transcribeAudio(buffer, "voice.ogg")
+        const maxDisplay = 3800
+        const displayText = transcription.length > maxDisplay
+          ? transcription.slice(0, maxDisplay) + "... (truncated)"
+          : transcription
+        await ctx.api.editMessageText(ctx.chat!.id, status.message_id, `<blockquote>${escapeHtml(displayText)}</blockquote>`, { parse_mode: "HTML" })
         messages.push({ type: "voice", content: transcription })
       } else if (ctx.message?.document) {
         const doc = ctx.message.document
