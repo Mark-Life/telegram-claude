@@ -579,6 +579,29 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     }
   }
 
+  /** Send or update compose mode status message with inline buttons */
+  async function updateComposeStatus(ctx: Context, state: UserState) {
+    const count = state.composeMessages?.length ?? 0
+    const text = `Composing (${count} message${count !== 1 ? "s" : ""})`
+    const keyboard = new InlineKeyboard()
+      .text("Send", `compose_send:${ctx.from!.id}`)
+      .text("Cancel", `compose_cancel:${ctx.from!.id}`)
+    if (state.composeStatusMessageId) {
+      await ctx.api.editMessageText(ctx.chat!.id, state.composeStatusMessageId, text, { reply_markup: keyboard }).catch(() => {})
+    } else {
+      const msg = await ctx.reply(text, { reply_markup: keyboard })
+      state.composeStatusMessageId = msg.message_id
+    }
+  }
+
+  /** Delete the compose status message if it exists */
+  async function cleanupComposeStatus(state: UserState, ctx: Context) {
+    if (state.composeStatusMessageId) {
+      await ctx.api.deleteMessage(ctx.chat!.id, state.composeStatusMessageId).catch(() => {})
+      state.composeStatusMessageId = undefined
+    }
+  }
+
   bot.on("message:text", (ctx) => {
     const prompt = buildPromptWithReplyContext(ctx, ctx.message.text, botId)
     handlePrompt(ctx, prompt).catch((e) => console.error("handlePrompt error:", e))
