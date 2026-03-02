@@ -290,7 +290,12 @@ export async function streamToTelegram(
       await flushTools()
     }
     if (mode === "thinking" && thinkingText) {
-      await flushThinking(true)
+      if (useDrafts) {
+        const { html, plainText } = renderThinkingHtml(thinkingText)
+        await safeSendMessage(ctx, chatId, html, plainText)
+      } else {
+        await flushThinking(true)
+      }
     }
     mode = newMode
     accumulated = ""
@@ -355,7 +360,12 @@ export async function streamToTelegram(
         await flushThinking().catch(() => {})
       } else if (event.kind === "thinking_done") {
         if (mode === "thinking" && thinkingText) {
-          await flushThinking(true)
+          if (useDrafts) {
+            const { html, plainText } = renderThinkingHtml(thinkingText)
+            await safeSendMessage(ctx, chatId, html, plainText)
+          } else {
+            await flushThinking(true)
+          }
         }
         thinkingText = ""
         mode = "none"
