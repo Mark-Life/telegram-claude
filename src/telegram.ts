@@ -291,6 +291,8 @@ export async function streamToTelegram(
         }
         thinkingText = ""
         mode = "none"
+      } else if (event.kind === "session_init") {
+        result.sessionId = event.sessionId
       } else if (event.kind === "plan_ready") {
         result.planPath = event.planPath
         break
