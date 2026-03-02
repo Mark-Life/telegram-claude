@@ -288,6 +288,20 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     await ctx.reply("Session cleared. Next message starts a fresh conversation.", { reply_markup: mainKeyboard })
   })
 
+  bot.command("compose", async (ctx) => {
+    const state = getState(ctx.from!.id)
+    if (state.composeMessages) {
+      await ctx.reply(`Already composing (${state.composeMessages.length} messages). /send when done.`)
+      return
+    }
+    state.composeMessages = []
+    const keyboard = new InlineKeyboard()
+      .text("Send", `compose_send:${ctx.from!.id}`)
+      .text("Cancel", `compose_cancel:${ctx.from!.id}`)
+    const msg = await ctx.reply("Compose mode. Send messages — /send when done.", { reply_markup: keyboard })
+    state.composeStatusMessageId = msg.message_id
+  })
+
   /** Build paginated history message with inline keyboard */
   function buildHistoryMessage(page: number) {
     const sessions = listAllSessions()
