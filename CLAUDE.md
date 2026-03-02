@@ -8,9 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 bun install          # install dependencies
 bun run src/index.ts # start bot
 bun --watch run src/index.ts  # dev mode (auto-reload on changes)
+bun run lint         # check lint/format (ultracite/biome)
+bun run fix          # auto-fix lint/format issues
 ```
-
-No test suite or linter configured.
 
 ## Architecture
 
