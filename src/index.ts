@@ -56,6 +56,9 @@ bot.start({
       { command: "branch", description: "Show current git branch" },
       { command: "pr", description: "List open pull requests" },
       { command: "help", description: "Show available commands" },
+      { command: "compose", description: "Start collecting messages" },
+      { command: "send", description: "Send composed messages" },
+      { command: "cancel", description: "Cancel compose mode" },
     ]
     const scopes = [
       { type: "default" as const },

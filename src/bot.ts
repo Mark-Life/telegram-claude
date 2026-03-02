@@ -9,6 +9,11 @@ import { getGitHubUrl, getCurrentBranch, listBranches, listOpenPRs } from "./git
 
 type QueuedMessage = { prompt: string; ctx: Context }
 
+type ComposeMessage = {
+  type: "text" | "voice" | "forwarded" | "file" | "photo"
+  content: string
+}
+
 type PendingPlan = {
   planPath: string
   sessionId?: string
@@ -21,6 +26,8 @@ type UserState = {
   queue: QueuedMessage[]
   queueStatusMessageId?: number
   pendingPlan?: PendingPlan
+  composeMessages?: ComposeMessage[]
+  composeStatusMessageId?: number
 }
 
 const userStates = new Map<number, UserState>()
@@ -35,6 +42,7 @@ function escapeHtml(text: string) {
 const mainKeyboard = new Keyboard()
   .text("Projects").text("History").row()
   .text("Stop").text("New").row()
+  .text("Compose").row()
   .resized().persistent()
 
 /** Extract reply-to-message text and prepend it as context (skip bot's own messages) */
@@ -94,6 +102,7 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     History: "/history",
     Stop: "/stop",
     New: "/new",
+    Compose: "/compose",
   }
   bot.use((ctx, next) => {
     const text = ctx.message?.text
@@ -103,6 +112,14 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       ctx.message!.entities = [{ type: "bot_command", offset: 0, length: cmd.length }]
     }
     return next()
+  })
+
+  // Compose mode interceptor: capture non-command messages when composing
+  bot.on("message", async (ctx, next) => {
+    const state = getState(ctx.from!.id)
+    if (!state.composeMessages) return next()
+    if (ctx.message?.text?.startsWith("/")) return next()
+    await collectComposeMessage(ctx, state)
   })
 
   bot.command("start", async (ctx) => {
@@ -146,7 +163,9 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     state.activeProject = fullPath
     state.queue = []
     state.pendingPlan = undefined
+    state.composeMessages = undefined
     await cleanupQueueStatus(state, ctx)
+    await cleanupComposeStatus(state, ctx)
     await ctx.answerCallbackQuery({ text: `Switched to ${displayName}` })
     const ghUrl = isGeneral ? null : getGitHubUrl(fullPath)
     const projectLabel = ghUrl
@@ -169,7 +188,9 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const hadQueue = state.queue.length > 0
     state.queue = []
     state.pendingPlan = undefined
+    state.composeMessages = undefined
     await cleanupQueueStatus(state, ctx)
+    await cleanupComposeStatus(state, ctx)
     const msg = stopped ? "Process stopped." + (hadQueue ? " Queue cleared." : "") : "No active process."
     await ctx.reply(msg, { reply_markup: mainKeyboard })
   })
@@ -184,8 +205,11 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const branch = state.activeProject && state.activeProject !== projectsDir ? getCurrentBranch(state.activeProject) : null
     const branchLine = branch ? `\nBranch: ${branch}` : ""
     const queueLine = state.queue.length > 0 ? `\nQueued: ${state.queue.length}` : ""
+    const composeLine = state.composeMessages
+      ? `\nComposing: ${state.composeMessages.length} messages`
+      : ""
 
-    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}${queueLine}`, { reply_markup: mainKeyboard })
+    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}${queueLine}${composeLine}`, { reply_markup: mainKeyboard })
   })
 
   bot.command("help", async (ctx) => {
@@ -199,6 +223,9 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
         "/status — show current state",
         "/branch — show current git branch",
         "/pr — list open pull requests",
+        "/compose — start collecting messages",
+        "/send — send composed messages",
+        "/cancel — cancel compose mode",
         "/help — show this message",
         "",
         "Send any text or voice message to chat with Claude in the active project.",
@@ -269,8 +296,78 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     state.sessions.delete(state.activeProject)
     state.queue = []
     state.pendingPlan = undefined
+    state.composeMessages = undefined
     await cleanupQueueStatus(state, ctx)
+    await cleanupComposeStatus(state, ctx)
     await ctx.reply("Session cleared. Next message starts a fresh conversation.", { reply_markup: mainKeyboard })
+  })
+
+  bot.command("compose", async (ctx) => {
+    const state = getState(ctx.from!.id)
+    if (state.composeMessages) {
+      await ctx.reply(`Already composing (${state.composeMessages.length} messages). /send when done.`)
+      return
+    }
+    state.composeMessages = []
+    const keyboard = new InlineKeyboard()
+      .text("Send", `compose_send:${ctx.from!.id}`)
+      .text("Cancel", `compose_cancel:${ctx.from!.id}`)
+    const msg = await ctx.reply("Compose mode. Send messages — /send when done.", { reply_markup: keyboard })
+    state.composeStatusMessageId = msg.message_id
+  })
+
+  /** Execute send: combine composed messages and send to Claude */
+  async function executeSend(ctx: Context, state: UserState) {
+    if (!state.composeMessages) {
+      await ctx.reply("Not in compose mode.", { reply_markup: mainKeyboard })
+      return
+    }
+    if (state.composeMessages.length === 0) {
+      state.composeMessages = undefined
+      await cleanupComposeStatus(state, ctx)
+      await ctx.reply("Nothing to send. Compose cancelled.", { reply_markup: mainKeyboard })
+      return
+    }
+    const combined = state.composeMessages.map((m) => m.content).join("\n\n")
+    state.composeMessages = undefined
+    await cleanupComposeStatus(state, ctx)
+    handlePrompt(ctx, combined).catch((e) => console.error("handlePrompt error:", e))
+  }
+
+  /** Execute cancel: discard composed messages */
+  async function executeCancel(ctx: Context, state: UserState) {
+    if (!state.composeMessages) {
+      await ctx.reply("Not in compose mode.", { reply_markup: mainKeyboard })
+      return
+    }
+    const count = state.composeMessages.length
+    state.composeMessages = undefined
+    await cleanupComposeStatus(state, ctx)
+    await ctx.reply(`Compose cancelled. ${count} message(s) discarded.`, { reply_markup: mainKeyboard })
+  }
+
+  bot.command("send", async (ctx) => {
+    const state = getState(ctx.from!.id)
+    await executeSend(ctx, state)
+  })
+
+  bot.command("cancel", async (ctx) => {
+    const state = getState(ctx.from!.id)
+    await executeCancel(ctx, state)
+  })
+
+  bot.callbackQuery(/^compose_send:(\d+)$/, async (ctx) => {
+    const userId = parseInt(ctx.match![1], 10)
+    const state = getState(userId)
+    await ctx.answerCallbackQuery()
+    await executeSend(ctx, state)
+  })
+
+  bot.callbackQuery(/^compose_cancel:(\d+)$/, async (ctx) => {
+    const userId = parseInt(ctx.match![1], 10)
+    const state = getState(userId)
+    await ctx.answerCallbackQuery()
+    await executeCancel(ctx, state)
   })
 
   /** Build paginated history message with inline keyboard */
@@ -570,6 +667,80 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
       await ctx.api.deleteMessage(ctx.chat!.id, state.queueStatusMessageId).catch(() => {})
       state.queueStatusMessageId = undefined
     }
+  }
+
+  /** Send or update compose mode status message with inline buttons */
+  async function updateComposeStatus(ctx: Context, state: UserState) {
+    const count = state.composeMessages?.length ?? 0
+    const text = `Composing (${count} message${count !== 1 ? "s" : ""})`
+    const keyboard = new InlineKeyboard()
+      .text("Send", `compose_send:${ctx.from!.id}`)
+      .text("Cancel", `compose_cancel:${ctx.from!.id}`)
+    if (state.composeStatusMessageId) {
+      await ctx.api.editMessageText(ctx.chat!.id, state.composeStatusMessageId, text, { reply_markup: keyboard }).catch(() => {})
+    } else {
+      const msg = await ctx.reply(text, { reply_markup: keyboard })
+      state.composeStatusMessageId = msg.message_id
+    }
+  }
+
+  /** Delete the compose status message if it exists */
+  async function cleanupComposeStatus(state: UserState, ctx: Context) {
+    if (state.composeStatusMessageId) {
+      await ctx.api.deleteMessage(ctx.chat!.id, state.composeStatusMessageId).catch(() => {})
+      state.composeStatusMessageId = undefined
+    }
+  }
+
+  /** Collect a message into compose queue based on its type */
+  async function collectComposeMessage(ctx: Context, state: UserState) {
+    const messages = state.composeMessages!
+    try {
+      if (ctx.message?.voice) {
+        const file = await ctx.getFile()
+        const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`
+        const res = await fetch(url)
+        const buffer = Buffer.from(await res.arrayBuffer())
+        const status = await ctx.reply("Transcribing...", {
+          reply_parameters: { message_id: ctx.message.message_id },
+        })
+        const transcription = await transcribeAudio(buffer, "voice.ogg")
+        const maxDisplay = 3800
+        const displayText = transcription.length > maxDisplay
+          ? transcription.slice(0, maxDisplay) + "... (truncated)"
+          : transcription
+        await ctx.api.editMessageText(ctx.chat!.id, status.message_id, `<blockquote>${escapeHtml(displayText)}</blockquote>`, { parse_mode: "HTML" })
+        messages.push({ type: "voice", content: transcription })
+      } else if (ctx.message?.document) {
+        const doc = ctx.message.document
+        const filename = doc.file_name ?? `file_${Date.now()}`
+        const dest = await saveUploadedFile(ctx, filename)
+        const caption = ctx.message.caption ?? ""
+        messages.push({ type: "file", content: `[File: ${filename} saved at ${dest}]\n${caption}`.trim() })
+      } else if (ctx.message?.photo) {
+        const photos = ctx.message.photo
+        const largest = photos[photos.length - 1]
+        const filename = `photo_${Date.now()}.jpg`
+        const dest = await saveUploadedFile(ctx, filename, largest.file_id)
+        const caption = ctx.message.caption ?? ""
+        messages.push({ type: "photo", content: `[Photo saved at ${dest}]\n${caption}`.trim() })
+      } else if (ctx.message?.forward_origin) {
+        const origin = ctx.message.forward_origin
+        let senderName = "unknown"
+        if (origin.type === "user") senderName = origin.sender_user.first_name
+        else if (origin.type === "channel") senderName = origin.chat.title
+        else if (origin.type === "hidden_user") senderName = origin.sender_user_name
+        const text = ctx.message.text ?? ctx.message.caption ?? ""
+        messages.push({ type: "forwarded", content: `[Forwarded from ${senderName}]\n${text}` })
+      } else if (ctx.message?.text) {
+        messages.push({ type: "text", content: ctx.message.text })
+      }
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : "unknown error"
+      await ctx.reply(`Error collecting message: ${errMsg}`).catch(() => {})
+      return
+    }
+    await updateComposeStatus(ctx, state)
   }
 
   bot.on("message:text", (ctx) => {

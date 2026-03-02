@@ -15,6 +15,7 @@ Telegram bot interface for Claude Code on a VPS. Message the bot from any device
 - **MarkdownV2 rendering** — formatted output with plain text fallback
 - **Plan mode interception** — when Claude enters plan mode, the plan is presented for approval with options to execute (new/resume session), modify with feedback, or cancel
 - **Cost & duration tracking** — metadata footer on each response
+- **Compose mode** — collect multiple messages (text, voice, forwarded, files, photos) into a single prompt with `/compose` and `/send`
 - **Access control** — single authorized user via Telegram user ID
 
 ## Prerequisites
@@ -106,9 +107,18 @@ systemctl --user stop telegram-claude      # stop
 | `/stop` | Kill running Claude process |
 | `/status` | Show active project & process state |
 | `/new` | Clear session, start fresh conversation |
+| `/compose` | Start collecting messages into a batch |
+| `/send` | Send all composed messages as one prompt |
+| `/cancel` | Cancel compose mode, discard messages |
+| `/branch` | Show current git branch |
+| `/pr` | List open pull requests |
 | `/help` | Show available commands |
 
 Text messages are forwarded to Claude Code as prompts. Voice messages are transcribed and forwarded the same way.
+
+### Compose Mode
+
+Use `/compose` to batch multiple messages into a single Claude prompt. Useful for forwarding context from other chats, combining voice notes with text, or building multi-part requests. All message types are supported: text, voice (auto-transcribed), forwarded messages, files, and photos. Send `/send` when done or `/cancel` to discard.
 
 ## How It Works
 
