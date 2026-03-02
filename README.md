@@ -5,7 +5,7 @@ Telegram bot interface for Claude Code on a VPS. Message the bot from any device
 ## Features
 
 - **Project switching** — select any project directory via inline keyboard, auto-unpins old messages
-- **Streaming responses** — progressively edited messages with live Claude output
+- **Streaming responses** — real-time draft messages with edit-based fallback
 - **Session continuity** — follow-up messages continue the same Claude conversation
 - **Message queuing** — messages sent while Claude is busy are queued and processed in order
 - **Thinking stream** — Claude's thinking/reasoning content streamed in a separate message
@@ -123,7 +123,7 @@ Use `/compose` to batch multiple messages into a single Claude prompt. Useful fo
 ## How It Works
 
 - Spawns `claude -p "<msg>" --output-format stream-json` in the selected project dir
-- Streams response back by progressively editing a Telegram message (~1.5s interval)
+- Streams response back via `sendMessageDraft` (~300ms interval), falling back to progressive message editing if drafts aren't supported
 - Long responses auto-split into multiple messages (4000 char limit)
 - Follow-up messages continue the same Claude session via `-r <session-id>`
 - Voice notes are transcribed via Groq Whisper (`whisper-large-v3-turbo`), files >20MB are chunked with ffmpeg
