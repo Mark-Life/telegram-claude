@@ -302,6 +302,60 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     state.composeStatusMessageId = msg.message_id
   })
 
+  /** Execute send: combine composed messages and send to Claude */
+  async function executeSend(ctx: Context, state: UserState) {
+    if (!state.composeMessages) {
+      await ctx.reply("Not in compose mode.", { reply_markup: mainKeyboard })
+      return
+    }
+    if (state.composeMessages.length === 0) {
+      state.composeMessages = undefined
+      await cleanupComposeStatus(state, ctx)
+      await ctx.reply("Nothing to send. Compose cancelled.", { reply_markup: mainKeyboard })
+      return
+    }
+    const combined = state.composeMessages.map((m) => m.content).join("\n\n")
+    state.composeMessages = undefined
+    await cleanupComposeStatus(state, ctx)
+    handlePrompt(ctx, combined).catch((e) => console.error("handlePrompt error:", e))
+  }
+
+  /** Execute cancel: discard composed messages */
+  async function executeCancel(ctx: Context, state: UserState) {
+    if (!state.composeMessages) {
+      await ctx.reply("Not in compose mode.", { reply_markup: mainKeyboard })
+      return
+    }
+    const count = state.composeMessages.length
+    state.composeMessages = undefined
+    await cleanupComposeStatus(state, ctx)
+    await ctx.reply(`Compose cancelled. ${count} message(s) discarded.`, { reply_markup: mainKeyboard })
+  }
+
+  bot.command("send", async (ctx) => {
+    const state = getState(ctx.from!.id)
+    await executeSend(ctx, state)
+  })
+
+  bot.command("cancel", async (ctx) => {
+    const state = getState(ctx.from!.id)
+    await executeCancel(ctx, state)
+  })
+
+  bot.callbackQuery(/^compose_send:(\d+)$/, async (ctx) => {
+    const userId = parseInt(ctx.match![1], 10)
+    const state = getState(userId)
+    await ctx.answerCallbackQuery()
+    await executeSend(ctx, state)
+  })
+
+  bot.callbackQuery(/^compose_cancel:(\d+)$/, async (ctx) => {
+    const userId = parseInt(ctx.match![1], 10)
+    const state = getState(userId)
+    await ctx.answerCallbackQuery()
+    await executeCancel(ctx, state)
+  })
+
   /** Build paginated history message with inline keyboard */
   function buildHistoryMessage(page: number) {
     const sessions = listAllSessions()
