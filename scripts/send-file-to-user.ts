@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+export {}
 
 const BLOCKED_PATTERNS = [
   /^\.env/,
