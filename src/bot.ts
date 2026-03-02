@@ -112,6 +112,14 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     return next()
   })
 
+  // Compose mode interceptor: capture non-command messages when composing
+  bot.on("message", async (ctx, next) => {
+    const state = getState(ctx.from!.id)
+    if (!state.composeMessages) return next()
+    if (ctx.message?.text?.startsWith("/")) return next()
+    await collectComposeMessage(ctx, state)
+  })
+
   bot.command("start", async (ctx) => {
     const state = getState(ctx.from!.id)
     const project = state.activeProject || "(none)"
