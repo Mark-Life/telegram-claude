@@ -203,8 +203,11 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
     const branch = state.activeProject && state.activeProject !== projectsDir ? getCurrentBranch(state.activeProject) : null
     const branchLine = branch ? `\nBranch: ${branch}` : ""
     const queueLine = state.queue.length > 0 ? `\nQueued: ${state.queue.length}` : ""
+    const composeLine = state.composeMessages
+      ? `\nComposing: ${state.composeMessages.length} messages`
+      : ""
 
-    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}${queueLine}`, { reply_markup: mainKeyboard })
+    await ctx.reply(`Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}${queueLine}${composeLine}`, { reply_markup: mainKeyboard })
   })
 
   bot.command("help", async (ctx) => {
@@ -218,6 +221,9 @@ export function createBot(token: string, allowedUserId: number, projectsDir: str
         "/status — show current state",
         "/branch — show current git branch",
         "/pr — list open pull requests",
+        "/compose — start collecting messages",
+        "/send — send composed messages",
+        "/cancel — cancel compose mode",
         "/help — show this message",
         "",
         "Send any text or voice message to chat with Claude in the active project.",
