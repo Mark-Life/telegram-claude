@@ -1,0 +1,3 @@
+bun run fix
+bun run lint
+bun run typecheck

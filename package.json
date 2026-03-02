@@ -6,7 +6,9 @@
     "dev": "bun --watch run src/index.ts",
     "auto-pr": "bun run scripts/auto-pr/index.ts",
     "lint": "bunx --bun ultracite check",
-    "fix": "bunx --bun ultracite fix"
+    "fix": "bunx --bun ultracite fix",
+    "typecheck": "tsc --noEmit",
+    "prepare": "husky"
   },
   "dependencies": {
     "execa": "^9.6.1",
@@ -17,6 +19,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.0",
     "@types/bun": "latest",
+    "husky": "^9.1.7",
     "typescript": "^5.7.0",
     "ultracite": "7.2.3"
   }
