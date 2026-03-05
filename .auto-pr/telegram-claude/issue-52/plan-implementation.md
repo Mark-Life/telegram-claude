@@ -19,7 +19,7 @@
       ```
   - Acceptance: `clearSessionCache` is exported from `history.ts` and calling it empties the `sessionProjectCache` Map.
 
-- [ ] **Task 3: Add `cleanupStaleState()` export to `bot.ts`**
+- [x] **Task 3: Add `cleanupStaleState()` export to `bot.ts`**
   - Files: `src/bot.ts`
   - Changes:
     - Add import: `import { clearSessionCache } from "./history";` (extend existing import on line 17 to include `clearSessionCache`)

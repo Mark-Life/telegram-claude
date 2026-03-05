@@ -14,7 +14,7 @@ import {
   listBranches,
   listOpenPRs,
 } from "./git";
-import { getSessionProject, listAllSessions } from "./history";
+import { clearSessionCache, getSessionProject, listAllSessions } from "./history";
 import { loadPersistedState, setActiveProject, updateSession } from "./state";
 import { streamToTelegram } from "./telegram";
 import { transcribeAudio } from "./transcribe";
@@ -126,6 +126,21 @@ function listProjects(projectsDir: string) {
   } catch {
     return [];
   }
+}
+
+/** Clears stale compose state and logs memory usage */
+export function cleanupStaleState() {
+  for (const [, state] of userStates) {
+    if (state.composeMessages && state.queue.length === 0) {
+      state.composeMessages = undefined;
+      state.composeStatusMessageId = undefined;
+    }
+  }
+  clearSessionCache();
+  const mem = process.memoryUsage();
+  console.log(
+    `[cleanup] rss=${(mem.rss / 1024 / 1024).toFixed(1)}MB heap=${(mem.heapUsed / 1024 / 1024).toFixed(1)}MB`
+  );
 }
 
 /** Create and configure the bot */
