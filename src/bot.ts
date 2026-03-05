@@ -15,6 +15,7 @@ import {
   listOpenPRs,
 } from "./git";
 import { getSessionProject, listAllSessions } from "./history";
+import { loadPersistedState, setActiveProject, updateSession } from "./state";
 import { streamToTelegram } from "./telegram";
 import { transcribeAudio } from "./transcribe";
 
@@ -98,7 +99,12 @@ function getUserId(ctx: Context) {
 function getState(id: number): UserState {
   let state = userStates.get(id);
   if (!state) {
-    state = { activeProject: "", sessions: new Map(), queue: [] };
+    const persisted = loadPersistedState();
+    state = {
+      activeProject: persisted?.activeProject ?? "",
+      sessions: persisted?.sessions ?? new Map(),
+      queue: [],
+    };
     userStates.set(id, state);
   }
   return state;
@@ -219,7 +225,7 @@ export function createBot(
 
     const state = getState(ctx.from.id);
     const chatId = ctx.chat!.id;
-    state.activeProject = fullPath;
+    setActiveProject(state, fullPath);
     state.queue = [];
     state.pendingPlan = undefined;
     state.composeMessages = undefined;
@@ -389,9 +395,9 @@ export function createBot(
   bot.command("new", async (ctx) => {
     const state = getState(getUserId(ctx));
     if (!state.activeProject) {
-      state.activeProject = projectsDir;
+      setActiveProject(state, projectsDir);
     }
-    state.sessions.delete(state.activeProject);
+    updateSession(state, state.activeProject);
     state.queue = [];
     state.pendingPlan = undefined;
     state.composeMessages = undefined;
@@ -566,7 +572,7 @@ export function createBot(
 
     const cachedProject = getSessionProject(sessionId);
     if (cachedProject) {
-      state.activeProject = cachedProject;
+      setActiveProject(state, cachedProject);
     }
 
     if (!state.activeProject) {
@@ -574,7 +580,7 @@ export function createBot(
       return;
     }
 
-    state.sessions.set(state.activeProject, sessionId);
+    updateSession(state, state.activeProject, sessionId);
     const chatId = ctx.chat!.id;
     const projectName = basename(state.activeProject);
     await ctx.answerCallbackQuery({ text: "Session resumed" });
@@ -678,8 +684,8 @@ export function createBot(
       return;
     }
 
-    state.activeProject = plan.projectPath;
-    state.sessions.delete(plan.projectPath);
+    setActiveProject(state, plan.projectPath);
+    updateSession(state, plan.projectPath);
     state.pendingPlan = undefined;
     await ctx.answerCallbackQuery({ text: "Executing plan (new session)..." });
     await ctx.editMessageText("Executing plan (new session)...");
@@ -699,9 +705,9 @@ export function createBot(
       return;
     }
 
-    state.activeProject = plan.projectPath;
+    setActiveProject(state, plan.projectPath);
     if (plan.sessionId) {
-      state.sessions.set(plan.projectPath, plan.sessionId);
+      updateSession(state, plan.projectPath, plan.sessionId);
     }
     state.pendingPlan = undefined;
     await ctx.answerCallbackQuery({
@@ -759,7 +765,7 @@ export function createBot(
     const state = getState(userId);
 
     if (!state.activeProject) {
-      state.activeProject = projectsDir;
+      setActiveProject(state, projectsDir);
       await ctx.reply("No project selected. Using General (all projects).", {
         reply_markup: mainKeyboard,
       });
@@ -767,9 +773,9 @@ export function createBot(
 
     if (state.pendingPlan) {
       const plan = state.pendingPlan;
-      state.activeProject = plan.projectPath;
+      setActiveProject(state, plan.projectPath);
       if (plan.sessionId) {
-        state.sessions.set(plan.projectPath, plan.sessionId);
+        updateSession(state, plan.projectPath, plan.sessionId);
       }
       state.pendingPlan = undefined;
       const feedbackPrompt = `Plan feedback from user: ${prompt}\n\nRevise the plan based on this feedback. Do not execute yet — present the updated plan.`;
@@ -817,7 +823,7 @@ export function createBot(
           branchName,
         });
         if (result.sessionId) {
-          state.sessions.set(state.activeProject, result.sessionId);
+          updateSession(state, state.activeProject, result.sessionId);
         }
         if (result.planPath) {
           stopClaude(userId);
@@ -990,7 +996,7 @@ export function createBot(
     const state = getState(ctx.from.id);
 
     if (!state.activeProject) {
-      state.activeProject = projectsDir;
+      setActiveProject(state, projectsDir);
       await ctx.reply("No project selected. Using General (all projects).", {
         reply_markup: mainKeyboard,
       });
@@ -1040,7 +1046,7 @@ export function createBot(
   ) {
     const state = getState(getUserId(ctx));
     if (!state.activeProject) {
-      state.activeProject = projectsDir;
+      setActiveProject(state, projectsDir);
       await ctx.reply("No project selected. Using General (all projects).", {
         reply_markup: mainKeyboard,
       });

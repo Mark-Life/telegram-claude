@@ -4,3 +4,6 @@ bun.lock
 
 # auto-pr working files
 .auto-pr/
+
+# persisted bot state
+.data/
