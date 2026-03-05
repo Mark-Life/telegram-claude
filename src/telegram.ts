@@ -4,6 +4,25 @@ import type { ClaudeEvent } from "./claude";
 
 const MAX_MSG_LENGTH = 4000;
 const EDIT_INTERVAL_MS = 1500;
+
+/** Split text into chunks that fit within Telegram's message length limit, breaking at newline boundaries when possible */
+export function splitText(text: string, maxLen = MAX_MSG_LENGTH) {
+  if (text.length <= maxLen) {
+    return [text];
+  }
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > maxLen) {
+    const cutPoint = remaining.lastIndexOf("\n", maxLen);
+    const splitAt = cutPoint > maxLen * 0.5 ? cutPoint : maxLen;
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt);
+  }
+  if (remaining) {
+    chunks.push(remaining);
+  }
+  return chunks;
+}
 const DRAFT_INTERVAL_MS = 300;
 const TYPING_INTERVAL_MS = 5000;
 

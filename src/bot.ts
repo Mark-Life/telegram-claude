@@ -16,7 +16,7 @@ import {
 } from "./git";
 import { getSessionProject, listAllSessions } from "./history";
 import { loadPersistedState, setActiveProject, updateSession } from "./state";
-import { streamToTelegram } from "./telegram";
+import { splitText, streamToTelegram } from "./telegram";
 import { transcribeAudio } from "./transcribe";
 
 interface QueuedMessage {
@@ -644,13 +644,10 @@ export function createBot(
       projectPath: state.activeProject,
     };
 
-    const maxLen = 4000;
-    const display =
-      planContent.length > maxLen
-        ? `${planContent.slice(0, maxLen)}\n... (truncated)`
-        : planContent;
-
-    await ctx.api.sendMessage(ctx.chat!.id, display);
+    const chunks = splitText(planContent);
+    for (const chunk of chunks) {
+      await ctx.api.sendMessage(ctx.chat!.id, chunk);
+    }
 
     const keyboard = new InlineKeyboard()
       .text("Execute (new session)", `plan_new:${userId}`)
