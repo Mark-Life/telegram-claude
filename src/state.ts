@@ -17,7 +17,7 @@ interface BotState {
   sessions: Map<string, string>;
 }
 
-const DATA_DIR = ".data";
+const DATA_DIR = join(import.meta.dirname, "..", ".data");
 const STATE_FILE = join(DATA_DIR, "state.json");
 
 /** Load persisted state from disk. Returns null if file missing or corrupt. */
