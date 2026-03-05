@@ -23,6 +23,7 @@ export function splitText(text: string, maxLen = MAX_MSG_LENGTH) {
   }
   return chunks;
 }
+
 const DRAFT_INTERVAL_MS = 300;
 const TYPING_INTERVAL_MS = 5000;
 
