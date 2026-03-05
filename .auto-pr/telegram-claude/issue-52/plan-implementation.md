@@ -7,7 +7,7 @@
     - In `collectComposeMessage()` (starts at line 919), add an early return guard before any processing: if `messages.length >= MAX_COMPOSE_MESSAGES`, reply with warning message (`Compose limit reached (${MAX_COMPOSE_MESSAGES} messages). Use /send to submit or /stop to clear.`) and return
   - Acceptance: When a user has 50 compose messages and sends another, bot replies with the limit warning and does not add the message. Normal compose flow works unaffected under 50 messages.
 
-- [ ] **Task 2: Export `clearSessionCache()` from `history.ts`**
+- [x] **Task 2: Export `clearSessionCache()` from `history.ts`**
   - Files: `src/history.ts`
   - Changes:
     - Add a new exported function after the `sessionProjectCache` declaration (line 18):

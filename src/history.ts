@@ -22,6 +22,11 @@ export function getSessionProject(sessionId: string) {
   return sessionProjectCache.get(sessionId);
 }
 
+/** Clears the session-to-project cache */
+export function clearSessionCache() {
+  sessionProjectCache.clear();
+}
+
 /** Convert a project path to Claude's storage directory name */
 function toStorageDirName(projectPath: string) {
   return projectPath.replace(/\//g, "-");
