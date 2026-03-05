@@ -47,6 +47,7 @@ interface UserState {
 
 const userStates = new Map<number, UserState>();
 const HISTORY_PAGE_SIZE = 5;
+const MAX_COMPOSE_MESSAGES = 50;
 
 /** Escape HTML special characters for Telegram */
 function escapeHtml(text: string) {
@@ -918,6 +919,12 @@ export function createBot(
   /** Collect a message into compose queue based on its type */
   async function collectComposeMessage(ctx: Context, state: UserState) {
     const messages = state.composeMessages!;
+    if (messages.length >= MAX_COMPOSE_MESSAGES) {
+      await ctx.reply(
+        `Compose limit reached (${MAX_COMPOSE_MESSAGES} messages). Use /send to submit or /stop to clear.`
+      );
+      return;
+    }
     try {
       if (ctx.message?.voice) {
         const file = await ctx.getFile();
