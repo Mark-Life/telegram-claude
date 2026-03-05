@@ -52,7 +52,7 @@
     - In the `shutdown()` function (lines 34-44), add `clearInterval(cleanupTimer);` before `stopAll()` (before line 41)
   - Acceptance: Cleanup runs every 3 hours. On SIGTERM/SIGINT, the timer is cleared before bot shutdown. No orphaned intervals after shutdown.
 
-- [ ] **Task 5: Verify everything works together**
+- [x] **Task 5: Verify everything works together**
   - Files: all modified files (`src/bot.ts`, `src/history.ts`, `src/index.ts`)
   - Changes: No code changes — verification only
     - Run `bun run lint` — no lint errors
