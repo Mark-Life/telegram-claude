@@ -43,7 +43,7 @@
     - Note: `userStates` is module-level (line 48), so `cleanupStaleState` can access it directly as a module-level export
   - Acceptance: `cleanupStaleState` is exported from `bot.ts`. When called, it clears `composeMessages` and `composeStatusMessageId` on users with empty queues, calls `clearSessionCache()`, and logs memory usage to stdout.
 
-- [ ] **Task 4: Add periodic cleanup timer in `index.ts`**
+- [x] **Task 4: Add periodic cleanup timer in `index.ts`**
   - Files: `src/index.ts`
   - Changes:
     - Add import: `import { cleanupStaleState } from "./bot";` (extend existing import on line 1)
