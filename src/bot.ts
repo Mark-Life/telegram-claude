@@ -14,7 +14,7 @@ import {
   listBranches,
   listOpenPRs,
 } from "./git";
-import { getSessionProject, listAllSessions } from "./history";
+import { clearSessionCache, getSessionProject, listAllSessions } from "./history";
 import { loadPersistedState, setActiveProject, updateSession } from "./state";
 import { streamToTelegram } from "./telegram";
 import { transcribeAudio } from "./transcribe";
@@ -47,6 +47,7 @@ interface UserState {
 
 const userStates = new Map<number, UserState>();
 const HISTORY_PAGE_SIZE = 5;
+const MAX_COMPOSE_MESSAGES = 50;
 
 /** Escape HTML special characters for Telegram */
 function escapeHtml(text: string) {
@@ -125,6 +126,21 @@ function listProjects(projectsDir: string) {
   } catch {
     return [];
   }
+}
+
+/** Clears stale compose state and logs memory usage */
+export function cleanupStaleState() {
+  for (const [, state] of userStates) {
+    if (state.composeMessages && state.queue.length === 0) {
+      state.composeMessages = undefined;
+      state.composeStatusMessageId = undefined;
+    }
+  }
+  clearSessionCache();
+  const mem = process.memoryUsage();
+  console.log(
+    `[cleanup] rss=${(mem.rss / 1024 / 1024).toFixed(1)}MB heap=${(mem.heapUsed / 1024 / 1024).toFixed(1)}MB`
+  );
 }
 
 /** Create and configure the bot */
@@ -918,6 +934,12 @@ export function createBot(
   /** Collect a message into compose queue based on its type */
   async function collectComposeMessage(ctx: Context, state: UserState) {
     const messages = state.composeMessages!;
+    if (messages.length >= MAX_COMPOSE_MESSAGES) {
+      await ctx.reply(
+        `Compose limit reached (${MAX_COMPOSE_MESSAGES} messages). Use /send to submit or /stop to clear.`
+      );
+      return;
+    }
     try {
       if (ctx.message?.voice) {
         const file = await ctx.getFile();

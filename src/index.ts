@@ -1,4 +1,4 @@
-import { createBot } from "./bot";
+import { cleanupStaleState, createBot } from "./bot";
 import { stopAll } from "./claude";
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -25,6 +25,8 @@ if (Number.isNaN(userId)) {
   process.exit(1);
 }
 
+const CLEANUP_INTERVAL = 3 * 60 * 60 * 1000;
+
 const bot = createBot(BOT_TOKEN, userId, PROJECTS_DIR);
 
 bot.catch((err) => {
@@ -32,12 +34,16 @@ bot.catch((err) => {
 });
 
 let shuttingDown = false;
+let cleanupTimer: ReturnType<typeof setInterval> | undefined;
 const shutdown = () => {
   if (shuttingDown) {
     return;
   }
   shuttingDown = true;
   console.log("Shutting down...");
+  if (cleanupTimer) {
+    clearInterval(cleanupTimer);
+  }
   stopAll();
   bot.stop();
   process.exit(0);
@@ -49,6 +55,7 @@ process.on("SIGINT", shutdown);
 bot.start({
   onStart: () => {
     console.log("Bot started");
+    cleanupTimer = setInterval(cleanupStaleState, CLEANUP_INTERVAL);
     const commands = [
       { command: "projects", description: "Switch active project" },
       { command: "history", description: "Resume a past session" },
