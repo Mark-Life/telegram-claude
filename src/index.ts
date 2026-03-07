@@ -143,9 +143,7 @@ bot.start({
           } catch (e) {
             console.error(`Failed to ensure topic for ${name}:`, e);
             if (e instanceof TopicPermissionError) {
-              bot.api
-                .sendMessage(chatId, `⚠️ ${e.message}`)
-                .catch(() => {});
+              bot.api.sendMessage(chatId, `⚠️ ${e.message}`).catch(() => {});
               break;
             }
           }

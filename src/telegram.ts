@@ -3,7 +3,7 @@ import { Marked } from "marked";
 import { type ClaudeEvent, getActiveProcessCount } from "./claude";
 
 const MAX_MSG_LENGTH = 4000;
-const BASE_EDIT_INTERVAL_MS = 1500;
+const BASE_EDIT_INTERVAL_MS = 1000;
 
 /** Scale edit interval based on number of parallel Claude processes */
 function getEditInterval() {
