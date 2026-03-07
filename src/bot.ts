@@ -21,6 +21,7 @@ import {
 } from "./history";
 import { loadPersistedState, setActiveProject, updateSession } from "./state";
 import { splitText, streamToTelegram } from "./telegram";
+import { getProjectForThread } from "./topics";
 import { transcribeAudio } from "./transcribe";
 
 interface QueuedMessage {
@@ -111,6 +112,37 @@ function getUserId(ctx: Context) {
   return ctx.from.id;
 }
 
+let _forumMode = false;
+
+/** Set forum mode flag (called from createBot) */
+function setForumMode(enabled: boolean) {
+  _forumMode = enabled;
+}
+
+/** Get the state key: threadId in forum mode, userId in private mode */
+function getStateKey(ctx: Context) {
+  if (_forumMode) {
+    return (
+      ctx.message?.message_thread_id ??
+      ctx.callbackQuery?.message?.message_thread_id ??
+      0
+    );
+  }
+  return getUserId(ctx);
+}
+
+/** Get thread ID for routing replies in forum mode */
+function getThreadId(ctx: Context): number | undefined {
+  if (!_forumMode) {
+    return undefined;
+  }
+  return (
+    ctx.message?.message_thread_id ??
+    ctx.callbackQuery?.message?.message_thread_id ??
+    undefined
+  );
+}
+
 /** Get or create user state */
 function getState(id: number): UserState {
   let state = userStates.get(id);
@@ -167,6 +199,7 @@ export function createBot(
   projectsDir: string
 ) {
   const bot = new Bot(token);
+  setForumMode(forumMode);
 
   bot.command("chatid", async (ctx) => {
     await ctx.reply(`Chat ID: <code>${ctx.chat.id}</code>`, {
@@ -212,7 +245,7 @@ export function createBot(
   // Compose mode interceptor: capture non-command messages when composing
   // Media group photos pass through to the photo handler for batching
   bot.on("message", async (ctx, next) => {
-    const state = getState(ctx.from.id);
+    const state = getState(getStateKey(ctx));
     if (!state.composeMessages) {
       return next();
     }
@@ -226,7 +259,7 @@ export function createBot(
   });
 
   bot.command("start", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const state = getState(getStateKey(ctx));
     const project = state.activeProject || "(none)";
     await ctx.reply(
       `Claude Code bot ready.\nActive project: ${project}\n\nCommands:\n/projects - switch project\n/history - resume a past session\n/stop - kill active process\n/status - current state\n/new - reset session`,
@@ -266,8 +299,8 @@ export function createBot(
       }
     }
 
-    const state = getState(ctx.from.id);
-    const chatId = ctx.chat!.id;
+    const stateKey = getStateKey(ctx);
+    const state = getState(stateKey);
     setActiveProject(state, fullPath);
     state.queue = [];
     state.pendingPlan = undefined;
@@ -281,26 +314,29 @@ export function createBot(
       : escapeHtml(displayName);
     const branch = isGeneral ? null : getCurrentBranch(fullPath);
     const branchSuffix = branch ? ` [${escapeHtml(branch)}]` : "";
-    const msg = await ctx.editMessageText(
+    const editedMsg = await ctx.editMessageText(
       `Active project: ${projectLabel}${branchSuffix}`,
       { parse_mode: "HTML" }
     );
-    await ctx.api.unpinAllChatMessages(chatId).catch(() => {});
-    const pinnedId =
-      typeof msg === "object" && "message_id" in msg
-        ? msg.message_id
-        : undefined;
-    if (pinnedId) {
-      await ctx.api
-        .pinChatMessage(chatId, pinnedId, { disable_notification: true })
-        .catch(() => {});
+    if (!forumMode) {
+      const msgChatId = ctx.chat!.id;
+      await ctx.api.unpinAllChatMessages(msgChatId).catch(() => {});
+      const pinnedId =
+        typeof editedMsg === "object" && "message_id" in editedMsg
+          ? editedMsg.message_id
+          : undefined;
+      if (pinnedId) {
+        await ctx.api
+          .pinChatMessage(msgChatId, pinnedId, { disable_notification: true })
+          .catch(() => {});
+      }
     }
   });
 
   bot.command("stop", async (ctx) => {
-    const userId = getUserId(ctx);
-    const state = getState(userId);
-    const stopped = stopClaude(userId);
+    const stateKey = getStateKey(ctx);
+    const state = getState(stateKey);
+    const stopped = stopClaude(stateKey);
     const hadQueue = state.queue.length > 0;
     state.queue = [];
     state.pendingPlan = undefined;
@@ -314,13 +350,14 @@ export function createBot(
   });
 
   bot.command("status", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const stateKey = getStateKey(ctx);
+    const state = getState(stateKey);
     const project = state.activeProject
       ? state.activeProject === projectsDir
         ? "general"
         : basename(state.activeProject)
       : "(none)";
-    const running = hasActiveProcess(getUserId(ctx)) ? "Yes" : "No";
+    const running = hasActiveProcess(stateKey) ? "Yes" : "No";
     const sessionCount = state.sessions.size;
     const branch =
       state.activeProject && state.activeProject !== projectsDir
@@ -362,7 +399,7 @@ export function createBot(
   });
 
   bot.command("branch", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const state = getState(getStateKey(ctx));
     if (!state.activeProject || state.activeProject === projectsDir) {
       await ctx.reply("No project selected or in general mode.", {
         reply_markup: mainKeyboard,
@@ -405,7 +442,7 @@ export function createBot(
   });
 
   bot.command("pr", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const state = getState(getStateKey(ctx));
     if (!state.activeProject || state.activeProject === projectsDir) {
       await ctx.reply("No project selected or in general mode.", {
         reply_markup: mainKeyboard,
@@ -436,7 +473,7 @@ export function createBot(
   });
 
   bot.command("new", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const state = getState(getStateKey(ctx));
     if (!state.activeProject) {
       setActiveProject(state, projectsDir);
     }
@@ -453,7 +490,8 @@ export function createBot(
   });
 
   bot.command("compose", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const stateKey = getStateKey(ctx);
+    const state = getState(stateKey);
     if (state.composeMessages) {
       await ctx.reply(
         `Already composing (${state.composeMessages.length} messages). /send when done.`
@@ -462,8 +500,8 @@ export function createBot(
     }
     state.composeMessages = [];
     const keyboard = new InlineKeyboard()
-      .text("Send", `compose_send:${getUserId(ctx)}`)
-      .text("Cancel", `compose_cancel:${getUserId(ctx)}`);
+      .text("Send", `compose_send:${stateKey}`)
+      .text("Cancel", `compose_cancel:${stateKey}`);
     const msg = await ctx.reply(
       "Compose mode. Send messages — /send when done.",
       { reply_markup: keyboard }
@@ -508,25 +546,23 @@ export function createBot(
   }
 
   bot.command("send", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const state = getState(getStateKey(ctx));
     await executeSend(ctx, state);
   });
 
   bot.command("cancel", async (ctx) => {
-    const state = getState(getUserId(ctx));
+    const state = getState(getStateKey(ctx));
     await executeCancel(ctx, state);
   });
 
-  bot.callbackQuery(/^compose_send:(\d+)$/, async (ctx) => {
-    const userId = Number.parseInt(ctx.match?.[1], 10);
-    const state = getState(userId);
+  bot.callbackQuery(/^compose_send:(.+)$/, async (ctx) => {
+    const state = getState(getStateKey(ctx));
     await ctx.answerCallbackQuery();
     await executeSend(ctx, state);
   });
 
-  bot.callbackQuery(/^compose_cancel:(\d+)$/, async (ctx) => {
-    const userId = Number.parseInt(ctx.match?.[1], 10);
-    const state = getState(userId);
+  bot.callbackQuery(/^compose_cancel:(.+)$/, async (ctx) => {
+    const state = getState(getStateKey(ctx));
     await ctx.answerCallbackQuery();
     await executeCancel(ctx, state);
   });
@@ -611,7 +647,7 @@ export function createBot(
 
   bot.callbackQuery(/^session:(.+)$/, async (ctx) => {
     const sessionId = ctx.match?.[1];
-    const state = getState(ctx.from.id);
+    const state = getState(getStateKey(ctx));
 
     const cachedProject = getSessionProject(sessionId);
     if (cachedProject) {
@@ -624,36 +660,29 @@ export function createBot(
     }
 
     updateSession(state, state.activeProject, sessionId);
-    const chatId = ctx.chat!.id;
     const projectName = basename(state.activeProject);
     await ctx.answerCallbackQuery({ text: "Session resumed" });
-    const msg = await ctx.editMessageText(
+    await ctx.editMessageText(
       `Resumed session in <b>${escapeHtml(projectName)}</b>. Next message continues this conversation.`,
       { parse_mode: "HTML" }
     );
-    await ctx.api.unpinAllChatMessages(chatId).catch(() => {});
-    const pinnedId =
-      typeof msg === "object" && "message_id" in msg
-        ? msg.message_id
-        : undefined;
-    if (pinnedId) {
-      await ctx.api
-        .pinChatMessage(chatId, pinnedId, { disable_notification: true })
-        .catch(() => {});
+    if (!forumMode) {
+      const msgChatId = ctx.chat!.id;
+      await ctx.api.unpinAllChatMessages(msgChatId).catch(() => {});
     }
   });
 
-  bot.callbackQuery(/^force_send:(\d+)$/, async (ctx) => {
-    const userId = ctx.from.id;
-    const stopped = stopClaude(userId);
+  bot.callbackQuery(/^force_send:(.+)$/, async (ctx) => {
+    const stateKey = getStateKey(ctx);
+    const stopped = stopClaude(stateKey);
     await ctx.answerCallbackQuery({
       text: stopped ? "Stopping current task..." : "No active process",
     });
   });
 
-  bot.callbackQuery(/^clear_queue:(\d+)$/, async (ctx) => {
-    const userId = ctx.from.id;
-    const state = getState(userId);
+  bot.callbackQuery(/^clear_queue:(.+)$/, async (ctx) => {
+    const stateKey = getStateKey(ctx);
+    const state = getState(stateKey);
     const count = state.queue.length;
     state.queue = [];
     await cleanupQueueStatus(state, ctx);
@@ -666,7 +695,7 @@ export function createBot(
   /** Read plan file and send to user with action buttons */
   async function presentPlan(
     ctx: Context,
-    userId: number,
+    stateKey: number,
     state: UserState,
     result: { planPath?: string; sessionId?: string }
   ) {
@@ -687,28 +716,30 @@ export function createBot(
       projectPath: state.activeProject,
     };
 
+    const threadId = getThreadId(ctx);
+    const threadOpts = threadId ? { message_thread_id: threadId } : {};
     const chunks = splitText(planContent);
     for (const chunk of chunks) {
-      await ctx.api.sendMessage(ctx.chat!.id, chunk);
+      await ctx.api.sendMessage(ctx.chat!.id, chunk, threadOpts);
     }
 
     const keyboard = new InlineKeyboard()
-      .text("Execute (new session)", `plan_new:${userId}`)
+      .text("Execute (new session)", `plan_new:${stateKey}`)
       .row()
-      .text("Execute (keep context)", `plan_resume:${userId}`)
+      .text("Execute (keep context)", `plan_resume:${stateKey}`)
       .row()
-      .text("Modify plan", `plan_modify:${userId}`);
+      .text("Modify plan", `plan_modify:${stateKey}`);
 
     await ctx.api.sendMessage(
       ctx.chat!.id,
       "Plan ready. How would you like to proceed?",
-      { reply_markup: keyboard }
+      { reply_markup: keyboard, ...threadOpts }
     );
   }
 
-  bot.callbackQuery(/^plan_new:(\d+)$/, async (ctx) => {
-    const userId = ctx.from.id;
-    const state = getState(userId);
+  bot.callbackQuery(/^plan_new:(.+)$/, async (ctx) => {
+    const stateKey = getStateKey(ctx);
+    const state = getState(stateKey);
     const plan = state.pendingPlan;
     if (!plan) {
       await ctx.answerCallbackQuery({ text: "No pending plan" });
@@ -731,14 +762,14 @@ export function createBot(
     await ctx.editMessageText("Executing plan (new session)...");
 
     const prompt = `Execute the following plan. Do not re-enter plan mode.\n\n${planContent}`;
-    runAndDrain(ctx, prompt, state, userId).catch((e) =>
+    runAndDrain(ctx, prompt, state, stateKey).catch((e) =>
       console.error("plan_new error:", e)
     );
   });
 
-  bot.callbackQuery(/^plan_resume:(\d+)$/, async (ctx) => {
-    const userId = ctx.from.id;
-    const state = getState(userId);
+  bot.callbackQuery(/^plan_resume:(.+)$/, async (ctx) => {
+    const stateKey = getStateKey(ctx);
+    const state = getState(stateKey);
     const plan = state.pendingPlan;
     if (!plan) {
       await ctx.answerCallbackQuery({ text: "No pending plan" });
@@ -757,21 +788,21 @@ export function createBot(
 
     const prompt =
       "The plan has been approved. Proceed with execution. Do not re-enter plan mode.";
-    runAndDrain(ctx, prompt, state, userId).catch((e) =>
+    runAndDrain(ctx, prompt, state, stateKey).catch((e) =>
       console.error("plan_resume error:", e)
     );
   });
 
-  bot.callbackQuery(/^plan_modify:(\d+)$/, async (ctx) => {
-    const userId = ctx.from.id;
-    const state = getState(userId);
+  bot.callbackQuery(/^plan_modify:(.+)$/, async (ctx) => {
+    const stateKey = getStateKey(ctx);
+    const state = getState(stateKey);
     if (!state.pendingPlan) {
       await ctx.answerCallbackQuery({ text: "No pending plan" });
       return;
     }
     const cancelKeyboard = new InlineKeyboard().text(
       "Cancel",
-      `plan_cancel:${userId}`
+      `plan_cancel:${stateKey}`
     );
     await ctx.answerCallbackQuery({ text: "Send your feedback" });
     await ctx.editMessageText(
@@ -780,19 +811,19 @@ export function createBot(
     );
   });
 
-  bot.callbackQuery(/^plan_cancel:(\d+)$/, async (ctx) => {
-    const userId = ctx.from.id;
-    const state = getState(userId);
+  bot.callbackQuery(/^plan_cancel:(.+)$/, async (ctx) => {
+    const stateKey = getStateKey(ctx);
+    const state = getState(stateKey);
     if (!state.pendingPlan) {
       await ctx.answerCallbackQuery({ text: "No pending plan" });
       return;
     }
     const keyboard = new InlineKeyboard()
-      .text("Execute (new session)", `plan_new:${userId}`)
+      .text("Execute (new session)", `plan_new:${stateKey}`)
       .row()
-      .text("Execute (keep context)", `plan_resume:${userId}`)
+      .text("Execute (keep context)", `plan_resume:${stateKey}`)
       .row()
-      .text("Modify plan", `plan_modify:${userId}`);
+      .text("Modify plan", `plan_modify:${stateKey}`);
     await ctx.answerCallbackQuery();
     await ctx.editMessageText("Plan ready. How would you like to proceed?", {
       reply_markup: keyboard,
@@ -801,8 +832,18 @@ export function createBot(
 
   /** Send a prompt to Claude and stream the response */
   async function handlePrompt(ctx: Context, prompt: string) {
-    const userId = getUserId(ctx);
-    const state = getState(userId);
+    const stateKey = getStateKey(ctx);
+    const state = getState(stateKey);
+
+    if (forumMode) {
+      const threadId = getThreadId(ctx);
+      if (threadId) {
+        const projectForThread = getProjectForThread(threadId);
+        if (projectForThread && state.activeProject !== projectForThread) {
+          setActiveProject(state, projectForThread);
+        }
+      }
+    }
 
     if (!state.activeProject) {
       setActiveProject(state, projectsDir);
@@ -819,17 +860,17 @@ export function createBot(
       }
       state.pendingPlan = undefined;
       const feedbackPrompt = `Plan feedback from user: ${prompt}\n\nRevise the plan based on this feedback. Do not execute yet — present the updated plan.`;
-      await runAndDrain(ctx, feedbackPrompt, state, userId);
+      await runAndDrain(ctx, feedbackPrompt, state, stateKey);
       return;
     }
 
-    if (hasActiveProcess(userId)) {
+    if (hasActiveProcess(stateKey)) {
       state.queue.push({ prompt, ctx });
       await sendOrUpdateQueueStatus(ctx, state);
       return;
     }
 
-    await runAndDrain(ctx, prompt, state, userId);
+    await runAndDrain(ctx, prompt, state, stateKey);
   }
 
   /** Run a Claude prompt and drain any queued messages afterward */
@@ -837,7 +878,7 @@ export function createBot(
     ctx: Context,
     prompt: string,
     state: UserState,
-    userId: number
+    processKey: number
   ) {
     let currentCtx = ctx;
     let currentPrompt = prompt;
@@ -851,9 +892,10 @@ export function createBot(
         state.activeProject !== projectsDir
           ? getCurrentBranch(state.activeProject)
           : null;
+      const threadId = getThreadId(currentCtx);
       try {
         const events = runClaude(
-          userId,
+          processKey,
           currentPrompt,
           state.activeProject,
           currentCtx.chat!.id,
@@ -861,13 +903,14 @@ export function createBot(
         );
         const result = await streamToTelegram(currentCtx, events, projectName, {
           branchName,
+          threadId,
         });
         if (result.sessionId) {
           updateSession(state, state.activeProject, result.sessionId);
         }
         if (result.planPath) {
-          stopClaude(userId);
-          await presentPlan(currentCtx, userId, state, result);
+          stopClaude(processKey);
+          await presentPlan(currentCtx, processKey, state, result);
           return;
         }
       } catch (e) {
@@ -899,11 +942,12 @@ export function createBot(
 
   /** Send or update the "Message queued" status message with Force Send button */
   async function sendOrUpdateQueueStatus(ctx: Context, state: UserState) {
+    const stateKey = getStateKey(ctx);
     const text = `Message queued (${state.queue.length} in queue)`;
     const keyboard = new InlineKeyboard()
-      .text("Force Send — stops current task", `force_send:${ctx.from?.id}`)
+      .text("Force Send — stops current task", `force_send:${stateKey}`)
       .row()
-      .text("Clear Queue", `clear_queue:${ctx.from?.id}`);
+      .text("Clear Queue", `clear_queue:${stateKey}`);
     if (state.queueStatusMessageId) {
       await ctx.api
         .editMessageText(ctx.chat!.id, state.queueStatusMessageId, text, {
@@ -928,11 +972,12 @@ export function createBot(
 
   /** Send or update compose mode status message with inline buttons */
   async function updateComposeStatus(ctx: Context, state: UserState) {
+    const stateKey = getStateKey(ctx);
     const count = state.composeMessages?.length ?? 0;
     const text = `Composing (${count} message${count !== 1 ? "s" : ""})`;
     const keyboard = new InlineKeyboard()
-      .text("Send", `compose_send:${ctx.from?.id}`)
-      .text("Cancel", `compose_cancel:${ctx.from?.id}`);
+      .text("Send", `compose_send:${stateKey}`)
+      .text("Cancel", `compose_cancel:${stateKey}`);
     if (state.composeStatusMessageId) {
       await ctx.api
         .editMessageText(ctx.chat!.id, state.composeStatusMessageId, text, {
@@ -1039,7 +1084,7 @@ export function createBot(
   });
 
   bot.on("message:voice", async (ctx) => {
-    const state = getState(ctx.from.id);
+    const state = getState(getStateKey(ctx));
 
     if (!state.activeProject) {
       setActiveProject(state, projectsDir);
@@ -1090,7 +1135,7 @@ export function createBot(
     filename: string,
     fileId?: string
   ) {
-    const state = getState(getUserId(ctx));
+    const state = getState(getStateKey(ctx));
     if (!state.activeProject) {
       setActiveProject(state, projectsDir);
       await ctx.reply("No project selected. Using General (all projects).", {

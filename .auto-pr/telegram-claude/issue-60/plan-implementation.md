@@ -29,7 +29,7 @@
     - `getAllTopicMappings()` — returns the full array (for `/projects` listing)
   - Acceptance: Topic mappings persist across restarts via `.data/topics.json`. `ensureTopic` creates a Telegram forum topic and stores the mapping. Lookup functions work bidirectionally.
 
-- [ ] **Task 4: Update `createBot` signature and state model for dual-mode**
+- [x] **Task 4: Update `createBot` signature and state model for dual-mode**
   - Files: `src/bot.ts`
   - Changes:
     - Change `createBot` signature: add `chatId: number` and `forumMode: boolean` parameters
