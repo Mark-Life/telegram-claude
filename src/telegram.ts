@@ -1,9 +1,15 @@
 import type { Context } from "grammy";
 import { Marked } from "marked";
-import type { ClaudeEvent } from "./claude";
+import { type ClaudeEvent, getActiveProcessCount } from "./claude";
 
 const MAX_MSG_LENGTH = 4000;
-const EDIT_INTERVAL_MS = 1500;
+const BASE_EDIT_INTERVAL_MS = 1500;
+
+/** Scale edit interval based on number of parallel Claude processes */
+function getEditInterval() {
+  const count = getActiveProcessCount();
+  return Math.max(BASE_EDIT_INTERVAL_MS, count * 1000);
+}
 
 /** Retry a Telegram API call on 429 (rate limit). Waits retry_after seconds then retries once. */
 async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
@@ -309,7 +315,7 @@ export async function streamToTelegram(
       return;
     }
 
-    const interval = useDrafts ? DRAFT_INTERVAL_MS : EDIT_INTERVAL_MS;
+    const interval = useDrafts ? DRAFT_INTERVAL_MS : getEditInterval();
     const now = Date.now();
     if (!final && now - lastEditTime < interval) {
       pendingEdit = true;
@@ -400,7 +406,7 @@ export async function streamToTelegram(
       return;
     }
 
-    const interval = useDrafts ? DRAFT_INTERVAL_MS : EDIT_INTERVAL_MS;
+    const interval = useDrafts ? DRAFT_INTERVAL_MS : getEditInterval();
     const now = Date.now();
     if (!final && now - lastEditTime < interval) {
       pendingEdit = true;
@@ -459,7 +465,7 @@ export async function streamToTelegram(
     if (pendingEdit && mode === "thinking") {
       await flushThinking().catch(() => {});
     }
-  }, EDIT_INTERVAL_MS);
+  }, 1000);
 
   const typingTimer = setInterval(() => {
     ctx.api.sendChatAction(chatId, "typing", threadOpts).catch(() => {});

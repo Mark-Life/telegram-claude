@@ -358,6 +358,11 @@ export function stopClaude(processKey: number) {
   return true;
 }
 
+/** Get the number of currently active Claude processes */
+export function getActiveProcessCount() {
+  return userProcesses.size;
+}
+
 /** Check if a process key has an active process */
 export function hasActiveProcess(processKey: number) {
   const entry = userProcesses.get(processKey);
