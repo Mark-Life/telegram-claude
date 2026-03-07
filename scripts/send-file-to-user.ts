@@ -10,14 +10,14 @@ const BLOCKED_PATTERNS = [
 ];
 
 const filePath = process.argv[2];
+const topicId = process.argv[3];
 if (!filePath) {
-  console.error("Usage: send-file-to-user.ts <filepath>");
+  console.error("Usage: send-file-to-user.ts <filepath> [topic-id]");
   process.exit(1);
 }
 
 const botToken = process.env.BOT_TOKEN;
 const chatId = process.env.TELEGRAM_CHAT_ID;
-const threadId = process.env.TELEGRAM_THREAD_ID;
 if (!(botToken && chatId)) {
   console.error("Missing BOT_TOKEN or TELEGRAM_CHAT_ID env vars");
   process.exit(1);
@@ -38,8 +38,8 @@ if (blocked) {
 
 const form = new FormData();
 form.append("chat_id", chatId);
-if (threadId) {
-  form.append("message_thread_id", threadId);
+if (topicId) {
+  form.append("message_thread_id", topicId);
 }
 form.append("document", file, basename);
 

@@ -218,11 +218,14 @@ function createStreamParser() {
 const SCRIPT_DIR = new URL("../scripts", import.meta.url).pathname;
 
 /** Build system prompt snippet telling Claude how to send files to the user */
-function buildFileSystemPrompt() {
+function buildFileSystemPrompt(threadId?: number) {
   const scriptPath = `${SCRIPT_DIR}/send-file-to-user.ts`;
+  const cmd = threadId
+    ? `bun ${scriptPath} <absolute-file-path> ${threadId}`
+    : `bun ${scriptPath} <absolute-file-path>`;
   return [
     "You can send files to the user's Telegram chat.",
-    `To send a file, run: bun ${scriptPath} <absolute-file-path>`,
+    `To send a file, run: ${cmd}`,
     "Only use this when the user explicitly asks you to send/share/download a file.",
     "The script blocks .env and other sensitive files automatically.",
   ].join(" ");
@@ -259,7 +262,7 @@ export async function* runClaude(
     "--include-partial-messages",
     "--dangerously-skip-permissions",
     "--append-system-prompt",
-    buildFileSystemPrompt(),
+    buildFileSystemPrompt(threadId),
   ];
   if (sessionId) {
     args.push("-r", sessionId);
@@ -276,11 +279,7 @@ export async function* runClaude(
     string,
     string | undefined
   >;
-  const env: Record<string, string | undefined> = {
-    ...restEnv,
-    TELEGRAM_CHAT_ID: String(chatId),
-    ...(threadId != null && { TELEGRAM_THREAD_ID: String(threadId) }),
-  };
+  const env = { ...restEnv, TELEGRAM_CHAT_ID: String(chatId) };
   const proc = spawn({
     cmd: args,
     cwd: projectDir,
