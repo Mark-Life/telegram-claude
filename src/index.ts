@@ -1,6 +1,8 @@
+import { readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { cleanupStaleState, createBot } from "./bot";
 import { stopAll } from "./claude";
-import { loadTopicMappings } from "./topics";
+import { ensureTopic, loadTopicMappings } from "./topics";
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ALLOWED_USER_ID = process.env.ALLOWED_USER_ID;
@@ -121,6 +123,25 @@ bot.start({
     Promise.all(
       scopes.map((scope) => bot.api.setMyCommands(commands, { scope }))
     ).catch((e) => console.error("Failed to set bot commands:", e));
+    if (forumMode) {
+      const projects = readdirSync(PROJECTS_DIR).filter((name) => {
+        try {
+          return statSync(join(PROJECTS_DIR, name)).isDirectory();
+        } catch {
+          return false;
+        }
+      });
+      Promise.all(
+        projects.map((name) =>
+          ensureTopic(bot.api, chatId, join(PROJECTS_DIR, name))
+        )
+      )
+        .then((ids) =>
+          console.log(`[forum] Ensured ${ids.length} project topics`)
+        )
+        .catch((e) => console.error("Failed to auto-create topics:", e));
+    }
+
     bot.api
       .sendMessage(chatId, `Bot started at ${new Date().toLocaleString()}`)
       .catch((e) => {

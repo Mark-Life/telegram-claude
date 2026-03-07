@@ -280,6 +280,14 @@ export function createBot(
   });
 
   bot.command("projects", async (ctx) => {
+    if (forumMode && getThreadId(ctx)) {
+      await replyToCtx(
+        ctx,
+        "Use /projects in General to manage project topics."
+      );
+      return;
+    }
+
     const projects = listProjects(projectsDir);
     if (projects.length === 0) {
       await replyToCtx(ctx, `No projects found in ${projectsDir}`, {
@@ -289,7 +297,9 @@ export function createBot(
     }
 
     const keyboard = new InlineKeyboard();
-    keyboard.text("General (all projects)", "project:__general__").row();
+    if (!forumMode) {
+      keyboard.text("General (all projects)", "project:__general__").row();
+    }
     for (const name of projects) {
       keyboard.text(name, `project:${name}`).row();
     }
