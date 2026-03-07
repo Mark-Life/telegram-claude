@@ -89,7 +89,7 @@
     - In project topics: route text/voice to that topic's project automatically via `getProjectForThread(threadId)`
   - Acceptance: General topic acts as control plane — commands work, text is rejected with helpful message. Project topics accept prompts and route to correct project. `/status` shows cross-topic overview.
 
-- [ ] **Task 10: Update `src/state.ts` — forum mode persistence**
+- [x] **Task 10: Update `src/state.ts` — forum mode persistence**
   - Files: `src/state.ts`
   - Changes:
     - Current `PersistedState` type: `{ activeProject, sessions }` — keep for private mode

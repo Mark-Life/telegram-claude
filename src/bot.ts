@@ -24,7 +24,12 @@ import {
   getSessionProject,
   listAllSessions,
 } from "./history";
-import { loadPersistedState, setActiveProject, updateSession } from "./state";
+import {
+  loadPersistedState,
+  setActiveProject,
+  setStateForumMode,
+  updateSession,
+} from "./state";
 import { splitText, streamToTelegram } from "./telegram";
 import { ensureTopic, getProjectForThread } from "./topics";
 import { transcribeAudio } from "./transcribe";
@@ -49,6 +54,7 @@ interface UserState {
   activeProject: string;
   composeMessages?: ComposeMessage[];
   composeStatusMessageId?: number;
+  key: number;
   pendingPlan?: PendingPlan;
   queue: QueuedMessage[];
   queueStatusMessageId?: number;
@@ -163,9 +169,10 @@ function replyToCtx(
 function getState(id: number): UserState {
   let state = userStates.get(id);
   if (!state) {
-    const persisted = loadPersistedState();
+    const persisted = loadPersistedState(id);
     state = {
       activeProject: persisted?.activeProject ?? "",
+      key: id,
       sessions: persisted?.sessions ?? new Map(),
       queue: [],
     };
@@ -216,6 +223,7 @@ export function createBot(
 ) {
   const bot = new Bot(token);
   setForumMode(forumMode);
+  setStateForumMode(forumMode);
 
   bot.command("chatid", async (ctx) => {
     await replyToCtx(ctx, `Chat ID: <code>${ctx.chat.id}</code>`, {
