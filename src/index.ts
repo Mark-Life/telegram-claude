@@ -131,20 +131,27 @@ bot.start({
           return false;
         }
       });
-      Promise.all(
-        projects.map((name) =>
-          ensureTopic(bot.api, chatId, join(PROJECTS_DIR, name))
-        )
-      )
-        .then((ids) =>
-          console.log(`[forum] Ensured ${ids.length} project topics`)
-        )
-        .catch((e) => {
-          console.error("Failed to auto-create topics:", e);
-          if (e instanceof TopicPermissionError) {
-            bot.api.sendMessage(chatId, `⚠️ ${e.message}`).catch(() => {});
+      (async () => {
+        let count = 0;
+        for (const name of projects) {
+          try {
+            await ensureTopic(bot.api, chatId, join(PROJECTS_DIR, name));
+            count++;
+            if (count < projects.length) {
+              await new Promise((r) => setTimeout(r, 500));
+            }
+          } catch (e) {
+            console.error(`Failed to ensure topic for ${name}:`, e);
+            if (e instanceof TopicPermissionError) {
+              bot.api
+                .sendMessage(chatId, `⚠️ ${e.message}`)
+                .catch(() => {});
+              break;
+            }
           }
-        });
+        }
+        console.log(`[forum] Ensured ${count} project topics`);
+      })();
     }
 
     bot.api

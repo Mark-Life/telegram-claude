@@ -135,6 +135,21 @@ export class TopicPermissionError extends Error {
   }
 }
 
+/** Retry once on 429 rate limit, waiting the specified retry_after duration */
+async function retryOnRateLimit<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err: unknown) {
+    const retryAfter = (err as { parameters?: { retry_after?: number } })
+      ?.parameters?.retry_after;
+    if (retryAfter && typeof retryAfter === "number") {
+      await new Promise((r) => setTimeout(r, retryAfter * 1000));
+      return fn();
+    }
+    throw err;
+  }
+}
+
 /** Get GitHub repo URL from a project directory's git remote */
 function getRepoUrl(projectPath: string) {
   try {
@@ -176,17 +191,15 @@ async function ensurePinnedRepoLink(
 
   try {
     const projectName = basename(projectPath);
-    const msg = await api.sendMessage(
-      chatId,
-      `<a href="${repoUrl}">${projectName}</a>`,
-      {
+    const send = () =>
+      api.sendMessage(chatId, `<a href="${repoUrl}">${projectName}</a>`, {
         message_thread_id: threadId,
         parse_mode: "HTML",
-      }
-    );
-    await api
-      .pinChatMessage(chatId, msg.message_id, { disable_notification: true })
-      .catch(() => {});
+      });
+    const msg = await retryOnRateLimit(send);
+    await retryOnRateLimit(() =>
+      api.pinChatMessage(chatId, msg.message_id, { disable_notification: true })
+    ).catch(() => {});
     mapping.pinnedRepoLinkId = msg.message_id;
     saveTopicMappings();
   } catch (e) {
