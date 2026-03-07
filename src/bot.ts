@@ -185,8 +185,8 @@ function listProjects(projectsDir: string) {
   }
 }
 
-/** Clears stale compose state and logs memory usage */
-export function cleanupStaleState() {
+/** Clears stale compose state, session cache, and logs memory usage */
+export function periodicCleanup() {
   for (const [, state] of userStates) {
     if (state.composeMessages && state.queue.length === 0) {
       state.composeMessages = undefined;
@@ -712,13 +712,22 @@ export function createBot(
     updateSession(state, state.activeProject, sessionId);
     const projectName = basename(state.activeProject);
     await ctx.answerCallbackQuery({ text: "Session resumed" });
-    await ctx.editMessageText(
+    const editedMsg = await ctx.editMessageText(
       `Resumed session in <b>${escapeHtml(projectName)}</b>. Next message continues this conversation.`,
       { parse_mode: "HTML" }
     );
     if (!forumMode) {
       const msgChatId = ctx.chat!.id;
       await ctx.api.unpinAllChatMessages(msgChatId).catch(() => {});
+      const pinnedId =
+        typeof editedMsg === "object" && "message_id" in editedMsg
+          ? editedMsg.message_id
+          : undefined;
+      if (pinnedId) {
+        await ctx.api
+          .pinChatMessage(msgChatId, pinnedId, { disable_notification: true })
+          .catch(() => {});
+      }
     }
   });
 

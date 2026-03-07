@@ -1,6 +1,6 @@
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { cleanupStaleState, createBot } from "./bot";
+import { createBot, periodicCleanup } from "./bot";
 import { stopAll } from "./claude";
 import { ensureTopic, loadTopicMappings } from "./topics";
 
@@ -99,7 +99,7 @@ process.on("SIGINT", shutdown);
 bot.start({
   onStart: () => {
     console.log("Bot started");
-    cleanupTimer = setInterval(cleanupStaleState, CLEANUP_INTERVAL);
+    cleanupTimer = setInterval(periodicCleanup, CLEANUP_INTERVAL);
     const commands = [
       { command: "projects", description: "Switch active project" },
       { command: "history", description: "Resume a past session" },

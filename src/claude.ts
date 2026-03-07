@@ -110,7 +110,6 @@ function formatToolInput(name: string, input: Record<string, unknown>) {
 
 /** Create a stateful stream-json parser */
 function createStreamParser() {
-  let _hasEmittedContent = false;
   let currentBlockType: "text" | "tool_use" | "thinking" | null = null;
   let currentToolName = "";
   let toolInputJson = "";
@@ -146,7 +145,6 @@ function createStreamParser() {
         } else if (block.type === "thinking") {
           currentBlockType = "thinking";
           thinkingStartTime = Date.now();
-          _hasEmittedContent = true;
           yield { kind: "thinking_start" };
         }
       } else if (
@@ -156,7 +154,6 @@ function createStreamParser() {
       ) {
         const delta = parsed.event.delta;
         if (delta.type === "text_delta" && currentBlockType === "text") {
-          _hasEmittedContent = true;
           yield { kind: "text_delta", text: delta.text };
         } else if (
           delta.type === "input_json_delta" &&
@@ -181,7 +178,6 @@ function createStreamParser() {
             input = JSON.parse(toolInputJson);
           } catch {}
           const shortInput = formatToolInput(currentToolName, input);
-          _hasEmittedContent = true;
           yield { kind: "tool_use", name: currentToolName, input: shortInput };
           if (
             currentToolName === "Write" &&
