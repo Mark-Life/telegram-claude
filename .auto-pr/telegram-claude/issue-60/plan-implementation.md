@@ -69,7 +69,7 @@
     - Pass `getStateKey(ctx)` as `processKey` to `runClaude`, `stopClaude`, `hasActiveProcess`
   - Acceptance: All bot replies appear in the correct topic in forum mode. No stray messages in General topic. Pin/unpin skipped in forum mode. Private mode unchanged.
 
-- [ ] **Task 8: Update `src/bot.ts` — `/projects` command for forum mode**
+- [x] **Task 8: Update `src/bot.ts` — `/projects` command for forum mode**
   - Files: `src/bot.ts`
   - Changes:
     - In the `/projects` command handler, check `forumMode`:

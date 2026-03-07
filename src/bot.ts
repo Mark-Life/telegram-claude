@@ -21,7 +21,7 @@ import {
 } from "./history";
 import { loadPersistedState, setActiveProject, updateSession } from "./state";
 import { splitText, streamToTelegram } from "./telegram";
-import { getProjectForThread } from "./topics";
+import { ensureTopic, getProjectForThread } from "./topics";
 import { transcribeAudio } from "./transcribe";
 
 interface QueuedMessage {
@@ -309,6 +309,20 @@ export function createBot(
         await ctx.answerCallbackQuery({ text: "Project not found" });
         return;
       }
+    }
+
+    if (forumMode && !isGeneral) {
+      const threadId = await ensureTopic(ctx.api, chatId, fullPath);
+      const topicState = getState(threadId);
+      setActiveProject(topicState, fullPath);
+      await ctx.answerCallbackQuery({
+        text: `Topic created for ${displayName}`,
+      });
+      await ctx.editMessageText(
+        `Project <b>${escapeHtml(displayName)}</b> — send messages in its topic.`,
+        { parse_mode: "HTML" }
+      );
+      return;
     }
 
     const stateKey = getStateKey(ctx);
