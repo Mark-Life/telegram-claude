@@ -121,9 +121,9 @@ function setForumMode(enabled: boolean) {
   _forumMode = enabled;
 }
 
-/** Get the state key: threadId in forum mode, userId in private mode. Returns 0 for General topic. */
+/** Get the state key: threadId in forum mode, userId in private chat or non-forum mode. Returns 0 for General topic. */
 function getStateKey(ctx: Context) {
-  if (_forumMode) {
+  if (_forumMode && ctx.chat?.type !== "private") {
     return (
       ctx.message?.message_thread_id ??
       ctx.callbackQuery?.message?.message_thread_id ??
@@ -131,6 +131,10 @@ function getStateKey(ctx: Context) {
     );
   }
   return getUserId(ctx);
+}
+
+function isPrivateChat(ctx: Context) {
+  return ctx.chat?.type === "private";
 }
 
 /** Get thread ID for routing replies in forum mode */
@@ -285,7 +289,7 @@ export function createBot(
   });
 
   bot.command("projects", async (ctx) => {
-    if (forumMode && getThreadId(ctx)) {
+    if (forumMode && getThreadId(ctx) && !isPrivateChat(ctx)) {
       await replyToCtx(
         ctx,
         "Use /projects in General to manage project topics."
@@ -302,7 +306,7 @@ export function createBot(
     }
 
     const keyboard = new InlineKeyboard();
-    if (!forumMode) {
+    if (!forumMode || isPrivateChat(ctx)) {
       keyboard.text("General (all projects)", "project:__general__").row();
     }
     for (const name of projects) {
@@ -326,7 +330,7 @@ export function createBot(
       }
     }
 
-    if (forumMode && !isGeneral) {
+    if (forumMode && !isGeneral && !isPrivateChat(ctx)) {
       let threadId: number;
       try {
         threadId = await ensureTopic(ctx.api, chatId, fullPath);
@@ -364,11 +368,15 @@ export function createBot(
       : escapeHtml(displayName);
     const branch = isGeneral ? null : getCurrentBranch(fullPath);
     const branchSuffix = branch ? ` [${escapeHtml(branch)}]` : "";
+    const dmForumWarning =
+      forumMode && isPrivateChat(ctx) && !isGeneral
+        ? "\n\n<i>Warning: using the same project here and in forum topics runs parallel Claude sessions, which may cause unexpected results.</i>"
+        : "";
     const editedMsg = await ctx.editMessageText(
-      `Active project: ${projectLabel}${branchSuffix}`,
+      `Active project: ${projectLabel}${branchSuffix}${dmForumWarning}`,
       { parse_mode: "HTML" }
     );
-    if (!forumMode) {
+    if (!forumMode || isPrivateChat(ctx)) {
       const msgChatId = ctx.chat!.id;
       await ctx.api.unpinAllChatMessages(msgChatId).catch(() => {});
       const pinnedId =
