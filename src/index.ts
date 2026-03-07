@@ -1,8 +1,12 @@
-import { cleanupStaleState, createBot } from "./bot";
+import { readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { createBot, periodicCleanup } from "./bot";
 import { stopAll } from "./claude";
+import { ensureTopic, loadTopicMappings, TopicPermissionError } from "./topics";
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ALLOWED_USER_ID = process.env.ALLOWED_USER_ID;
+const ALLOWED_CHAT_ID = process.env.ALLOWED_CHAT_ID;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const PROJECTS_DIR = process.env.PROJECTS_DIR || "/home/agent/projects";
 
@@ -25,9 +29,49 @@ if (Number.isNaN(userId)) {
   process.exit(1);
 }
 
+const chatId = ALLOWED_CHAT_ID ? Number.parseInt(ALLOWED_CHAT_ID, 10) : userId;
+if (Number.isNaN(chatId)) {
+  console.error("ALLOWED_CHAT_ID must be a number");
+  process.exit(1);
+}
+
 const CLEANUP_INTERVAL = 3 * 60 * 60 * 1000;
 
-const bot = createBot(BOT_TOKEN, userId, PROJECTS_DIR);
+let forumMode = false;
+
+async function detectForumMode(token: string) {
+  if (chatId >= 0) {
+    return false;
+  }
+  try {
+    const res = await fetch(
+      `https://api.telegram.org/bot${token}/getChat?chat_id=${chatId}`
+    );
+    const data = (await res.json()) as {
+      ok: boolean;
+      result?: { is_forum?: boolean };
+    };
+    if (!(data.ok && data.result?.is_forum)) {
+      console.log(
+        `Chat ${chatId} is a group but not a forum — running in private mode`
+      );
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("Failed to detect forum mode, falling back to private:", e);
+    return false;
+  }
+}
+
+forumMode = await detectForumMode(BOT_TOKEN);
+
+if (forumMode) {
+  loadTopicMappings();
+  console.log(`Forum mode enabled (chat ${chatId})`);
+}
+
+const bot = createBot(BOT_TOKEN, userId, chatId, forumMode, PROJECTS_DIR);
 
 bot.catch((err) => {
   console.error("Bot error:", err);
@@ -55,7 +99,7 @@ process.on("SIGINT", shutdown);
 bot.start({
   onStart: () => {
     console.log("Bot started");
-    cleanupTimer = setInterval(cleanupStaleState, CLEANUP_INTERVAL);
+    cleanupTimer = setInterval(periodicCleanup, CLEANUP_INTERVAL);
     const commands = [
       { command: "projects", description: "Switch active project" },
       { command: "history", description: "Resume a past session" },
@@ -68,6 +112,7 @@ bot.start({
       { command: "compose", description: "Start collecting messages" },
       { command: "send", description: "Send composed messages" },
       { command: "cancel", description: "Cancel compose mode" },
+      { command: "chatid", description: "Show chat ID" },
     ];
     const scopes = [
       { type: "default" as const },
@@ -78,8 +123,46 @@ bot.start({
     Promise.all(
       scopes.map((scope) => bot.api.setMyCommands(commands, { scope }))
     ).catch((e) => console.error("Failed to set bot commands:", e));
+    if (forumMode) {
+      const projects = readdirSync(PROJECTS_DIR).filter((name) => {
+        try {
+          return statSync(join(PROJECTS_DIR, name)).isDirectory();
+        } catch {
+          return false;
+        }
+      });
+      (async () => {
+        let count = 0;
+        for (const name of projects) {
+          try {
+            await ensureTopic(bot.api, chatId, join(PROJECTS_DIR, name));
+            count++;
+            if (count < projects.length) {
+              await new Promise((r) => setTimeout(r, 500));
+            }
+          } catch (e) {
+            console.error(`Failed to ensure topic for ${name}:`, e);
+            if (e instanceof TopicPermissionError) {
+              bot.api.sendMessage(chatId, `⚠️ ${e.message}`).catch(() => {});
+              break;
+            }
+          }
+        }
+        console.log(`[forum] Ensured ${count} project topics`);
+      })();
+    }
+
     bot.api
-      .sendMessage(userId, `Bot started at ${new Date().toLocaleString()}`)
-      .catch((e) => console.error("Failed to send startup message:", e));
+      .sendMessage(chatId, `Bot started at ${new Date().toLocaleString()}`)
+      .catch((e) => {
+        // In forum supergroups, this fails if General topic is closed — non-fatal
+        if (forumMode) {
+          console.log(
+            "Startup message skipped (forum General topic may be closed)"
+          );
+        } else {
+          console.error("Failed to send startup message:", e);
+        }
+      });
   },
 });

@@ -110,7 +110,6 @@ function formatToolInput(name: string, input: Record<string, unknown>) {
 
 /** Create a stateful stream-json parser */
 function createStreamParser() {
-  let _hasEmittedContent = false;
   let currentBlockType: "text" | "tool_use" | "thinking" | null = null;
   let currentToolName = "";
   let toolInputJson = "";
@@ -146,7 +145,6 @@ function createStreamParser() {
         } else if (block.type === "thinking") {
           currentBlockType = "thinking";
           thinkingStartTime = Date.now();
-          _hasEmittedContent = true;
           yield { kind: "thinking_start" };
         }
       } else if (
@@ -156,7 +154,6 @@ function createStreamParser() {
       ) {
         const delta = parsed.event.delta;
         if (delta.type === "text_delta" && currentBlockType === "text") {
-          _hasEmittedContent = true;
           yield { kind: "text_delta", text: delta.text };
         } else if (
           delta.type === "input_json_delta" &&
@@ -181,7 +178,6 @@ function createStreamParser() {
             input = JSON.parse(toolInputJson);
           } catch {}
           const shortInput = formatToolInput(currentToolName, input);
-          _hasEmittedContent = true;
           yield { kind: "tool_use", name: currentToolName, input: shortInput };
           if (
             currentToolName === "Write" &&
@@ -218,25 +214,29 @@ function createStreamParser() {
 const SCRIPT_DIR = new URL("../scripts", import.meta.url).pathname;
 
 /** Build system prompt snippet telling Claude how to send files to the user */
-function buildFileSystemPrompt() {
+function buildFileSystemPrompt(threadId?: number) {
   const scriptPath = `${SCRIPT_DIR}/send-file-to-user.ts`;
+  const cmd = threadId
+    ? `bun ${scriptPath} <absolute-file-path> ${threadId}`
+    : `bun ${scriptPath} <absolute-file-path>`;
   return [
     "You can send files to the user's Telegram chat.",
-    `To send a file, run: bun ${scriptPath} <absolute-file-path>`,
+    `To send a file, run: ${cmd}`,
     "Only use this when the user explicitly asks you to send/share/download a file.",
     "The script blocks .env and other sensitive files automatically.",
   ].join(" ");
 }
 
-/** Spawn claude CLI and yield streaming events, tracked per Telegram user */
+/** Spawn claude CLI and yield streaming events. processKey is userId (private) or threadId (forum) */
 export async function* runClaude(
-  telegramUserId: number,
+  processKey: number,
   prompt: string,
   projectDir: string,
   chatId: number,
-  sessionId?: string
+  sessionId?: string,
+  threadId?: number
 ): AsyncGenerator<ClaudeEvent> {
-  const existing = userProcesses.get(telegramUserId);
+  const existing = userProcesses.get(processKey);
   if (existing) {
     if (!existing.ac.signal.aborted) {
       yield {
@@ -258,7 +258,7 @@ export async function* runClaude(
     "--include-partial-messages",
     "--dangerously-skip-permissions",
     "--append-system-prompt",
-    buildFileSystemPrompt(),
+    buildFileSystemPrompt(threadId),
   ];
   if (sessionId) {
     args.push("-r", sessionId);
@@ -269,7 +269,7 @@ export async function* runClaude(
   const done = new Promise<void>((r) => {
     resolveCleanup = r;
   });
-  userProcesses.set(telegramUserId, { ac, done });
+  userProcesses.set(processKey, { ac, done });
 
   const { CLAUDECODE: _, ...restEnv } = process.env as Record<
     string,
@@ -343,14 +343,14 @@ export async function* runClaude(
     proc.kill();
     await proc.exited;
     await stderrDrain.catch(() => {});
-    userProcesses.delete(telegramUserId);
+    userProcesses.delete(processKey);
     resolveCleanup();
   }
 }
 
-/** Stop the active Claude process for a user */
-export function stopClaude(telegramUserId: number) {
-  const entry = userProcesses.get(telegramUserId);
+/** Stop the active Claude process by key (userId in private, threadId in forum) */
+export function stopClaude(processKey: number) {
+  const entry = userProcesses.get(processKey);
   if (!entry || entry.ac.signal.aborted) {
     return false;
   }
@@ -358,9 +358,14 @@ export function stopClaude(telegramUserId: number) {
   return true;
 }
 
-/** Check if a user has an active process */
-export function hasActiveProcess(telegramUserId: number) {
-  const entry = userProcesses.get(telegramUserId);
+/** Get the number of currently active Claude processes */
+export function getActiveProcessCount() {
+  return userProcesses.size;
+}
+
+/** Check if a process key has an active process */
+export function hasActiveProcess(processKey: number) {
+  const entry = userProcesses.get(processKey);
   return !!entry && !entry.ac.signal.aborted;
 }
 

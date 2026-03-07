@@ -1,9 +1,29 @@
 import type { Context } from "grammy";
 import { Marked } from "marked";
-import type { ClaudeEvent } from "./claude";
+import { type ClaudeEvent, getActiveProcessCount } from "./claude";
 
 const MAX_MSG_LENGTH = 4000;
-const EDIT_INTERVAL_MS = 1500;
+const BASE_EDIT_INTERVAL_MS = 1000;
+
+/** Scale edit interval based on number of parallel Claude processes */
+function getEditInterval() {
+  const count = getActiveProcessCount();
+  return Math.max(BASE_EDIT_INTERVAL_MS, count * 1000);
+}
+
+/** Retry a Telegram API call on 429 (rate limit). Waits retry_after seconds then retries once. */
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err: any) {
+    const retryAfter = err?.parameters?.retry_after;
+    if (retryAfter && typeof retryAfter === "number") {
+      await new Promise((r) => setTimeout(r, retryAfter * 1000));
+      return fn();
+    }
+    throw err;
+  }
+}
 
 /** Split text into chunks that fit within Telegram's message length limit, breaking at newline boundaries when possible */
 export function splitText(text: string, maxLen = MAX_MSG_LENGTH) {
@@ -28,7 +48,7 @@ const DRAFT_INTERVAL_MS = 300;
 const TYPING_INTERVAL_MS = 5000;
 
 /** Escape HTML special characters */
-function escapeHtml(text: string) {
+export function escapeHtml(text: string) {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -142,9 +162,11 @@ async function safeEditMessage(
 ) {
   const displayText = text || "...";
   try {
-    await ctx.api.editMessageText(chatId, messageId, displayText, {
-      parse_mode: "HTML",
-    });
+    await withRetry(() =>
+      ctx.api.editMessageText(chatId, messageId, displayText, {
+        parse_mode: "HTML",
+      })
+    );
     return true;
   } catch (err: any) {
     if (
@@ -154,7 +176,9 @@ async function safeEditMessage(
       return true;
     }
     try {
-      await ctx.api.editMessageText(chatId, messageId, rawText ?? displayText);
+      await withRetry(() =>
+        ctx.api.editMessageText(chatId, messageId, rawText ?? displayText)
+      );
       return false;
     } catch (err2: any) {
       if (
@@ -176,19 +200,30 @@ async function safeSendDraft(
   chatId: number,
   draftId: number,
   html: string,
-  rawText?: string
+  rawText?: string,
+  extraOpts?: Record<string, unknown>
 ) {
   const displayText = html || "...";
   try {
-    await ctx.api.sendMessageDraft(chatId, draftId, displayText, {
-      parse_mode: "HTML",
-    });
+    await withRetry(() =>
+      ctx.api.sendMessageDraft(chatId, draftId, displayText, {
+        parse_mode: "HTML",
+        ...extraOpts,
+      })
+    );
   } catch (err: any) {
     if (err?.description?.includes("not modified")) {
       return;
     }
     try {
-      await ctx.api.sendMessageDraft(chatId, draftId, rawText ?? displayText);
+      await withRetry(() =>
+        ctx.api.sendMessageDraft(
+          chatId,
+          draftId,
+          rawText ?? displayText,
+          extraOpts
+        )
+      );
     } catch (err2: any) {
       if (!err2?.description?.includes("not modified")) {
         throw err2;
@@ -202,15 +237,21 @@ async function safeSendMessage(
   ctx: Context,
   chatId: number,
   html: string,
-  rawText?: string
+  rawText?: string,
+  extraOpts?: Record<string, unknown>
 ) {
   const displayText = html || "...";
   try {
-    return await ctx.api.sendMessage(chatId, displayText, {
-      parse_mode: "HTML",
-    });
+    return await withRetry(() =>
+      ctx.api.sendMessage(chatId, displayText, {
+        parse_mode: "HTML",
+        ...extraOpts,
+      })
+    );
   } catch {
-    return await ctx.api.sendMessage(chatId, rawText ?? displayText);
+    return await withRetry(() =>
+      ctx.api.sendMessage(chatId, rawText ?? displayText, extraOpts)
+    );
   }
 }
 
@@ -225,6 +266,7 @@ interface StreamResult {
 
 interface StreamOptions {
   branchName?: string | null;
+  threadId?: number;
 }
 
 type MessageMode = "text" | "tools" | "thinking" | "none";
@@ -238,6 +280,8 @@ export async function streamToTelegram(
 ): Promise<StreamResult> {
   const chatId = ctx.chat!.id;
   const branchName = options?.branchName;
+  const threadId = options?.threadId;
+  const threadOpts = threadId ? { message_thread_id: threadId } : {};
   const result: StreamResult = {};
 
   let mode: MessageMode = "none";
@@ -248,16 +292,17 @@ export async function streamToTelegram(
   let toolLines: string[] = [];
   let thinkingText = "";
   let lastTextMessageId = 0;
-  let useDrafts: boolean | null = null;
+  const isPrivateChat = ctx.chat?.type === "private";
+  let useDrafts: boolean | null = isPrivateChat ? null : false;
   const draftId = chatId;
 
   /** Send a new Telegram message and track its ID */
   const sendNew = async (text: string, parseMode?: "HTML") => {
-    const opts: Record<string, unknown> = {};
+    const opts: Record<string, unknown> = { ...threadOpts };
     if (parseMode) {
       opts.parse_mode = parseMode;
     }
-    const sent = await ctx.api.sendMessage(chatId, text, opts);
+    const sent = await withRetry(() => ctx.api.sendMessage(chatId, text, opts));
     messageId = sent.message_id;
     lastEditTime = 0;
     pendingEdit = false;
@@ -270,7 +315,7 @@ export async function streamToTelegram(
       return;
     }
 
-    const interval = useDrafts ? DRAFT_INTERVAL_MS : EDIT_INTERVAL_MS;
+    const interval = useDrafts ? DRAFT_INTERVAL_MS : getEditInterval();
     const now = Date.now();
     if (!final && now - lastEditTime < interval) {
       pendingEdit = true;
@@ -292,7 +337,8 @@ export async function streamToTelegram(
           ctx,
           chatId,
           markdownToTelegramHtml(chunk),
-          chunk
+          chunk,
+          threadOpts
         );
       } else {
         await safeEditMessage(
@@ -313,7 +359,8 @@ export async function streamToTelegram(
         chatId,
         draftId,
         markdownToTelegramHtml(text),
-        text
+        text,
+        threadOpts
       );
     } else {
       await safeEditMessage(
@@ -359,7 +406,7 @@ export async function streamToTelegram(
       return;
     }
 
-    const interval = useDrafts ? DRAFT_INTERVAL_MS : EDIT_INTERVAL_MS;
+    const interval = useDrafts ? DRAFT_INTERVAL_MS : getEditInterval();
     const now = Date.now();
     if (!final && now - lastEditTime < interval) {
       pendingEdit = true;
@@ -370,7 +417,7 @@ export async function streamToTelegram(
 
     const { html, plainText } = renderThinkingHtml(thinkingText);
     if (useDrafts) {
-      await safeSendDraft(ctx, chatId, draftId, html, plainText);
+      await safeSendDraft(ctx, chatId, draftId, html, plainText, threadOpts);
     } else {
       await safeEditMessage(ctx, chatId, messageId, html, plainText);
     }
@@ -384,7 +431,8 @@ export async function streamToTelegram(
           ctx,
           chatId,
           markdownToTelegramHtml(accumulated),
-          accumulated
+          accumulated,
+          threadOpts
         );
         lastTextMessageId = sent?.message_id ?? 0;
       } else {
@@ -398,7 +446,7 @@ export async function streamToTelegram(
     if (mode === "thinking" && thinkingText) {
       if (useDrafts) {
         const { html, plainText } = renderThinkingHtml(thinkingText);
-        await safeSendMessage(ctx, chatId, html, plainText);
+        await safeSendMessage(ctx, chatId, html, plainText, threadOpts);
       } else {
         await flushThinking(true);
       }
@@ -417,12 +465,12 @@ export async function streamToTelegram(
     if (pendingEdit && mode === "thinking") {
       await flushThinking().catch(() => {});
     }
-  }, EDIT_INTERVAL_MS);
+  }, 1000);
 
   const typingTimer = setInterval(() => {
-    ctx.api.sendChatAction(chatId, "typing").catch(() => {});
+    ctx.api.sendChatAction(chatId, "typing", threadOpts).catch(() => {});
   }, TYPING_INTERVAL_MS);
-  ctx.api.sendChatAction(chatId, "typing").catch(() => {});
+  ctx.api.sendChatAction(chatId, "typing", threadOpts).catch(() => {});
 
   try {
     for await (const event of events) {
@@ -431,11 +479,18 @@ export async function streamToTelegram(
           mode = await switchMode("text");
           if (useDrafts === null) {
             try {
-              await ctx.api.sendMessageDraft(chatId, draftId, "...", {
-                parse_mode: "HTML",
-              });
+              await withRetry(() =>
+                ctx.api.sendMessageDraft(chatId, draftId, "...", {
+                  parse_mode: "HTML",
+                  ...threadOpts,
+                })
+              );
               useDrafts = true;
-            } catch {
+            } catch (draftErr) {
+              console.warn(
+                "sendMessageDraft not supported, falling back to editMessageText:",
+                (draftErr as any)?.description ?? draftErr
+              );
               useDrafts = false;
               await sendNew("...");
             }
@@ -463,7 +518,8 @@ export async function streamToTelegram(
             chatId,
             draftId,
             "<i>Thinking...</i>",
-            "Thinking..."
+            "Thinking...",
+            threadOpts
           );
         } else {
           await sendNew("<i>Thinking...</i>", "HTML");
@@ -477,7 +533,8 @@ export async function streamToTelegram(
               chatId,
               draftId,
               "<i>Thinking...</i>",
-              "Thinking..."
+              "Thinking...",
+              threadOpts
             );
           } else {
             await sendNew("<i>Thinking...</i>", "HTML");
@@ -489,7 +546,7 @@ export async function streamToTelegram(
         if (mode === "thinking" && thinkingText) {
           if (useDrafts) {
             const { html, plainText } = renderThinkingHtml(thinkingText);
-            await safeSendMessage(ctx, chatId, html, plainText);
+            await safeSendMessage(ctx, chatId, html, plainText, threadOpts);
           } else {
             await flushThinking(true);
           }
@@ -546,7 +603,8 @@ export async function streamToTelegram(
         ctx,
         chatId,
         display || "...",
-        accumulated
+        accumulated,
+        threadOpts
       );
       lastTextMessageId = sent?.message_id ?? 0;
     } else {
@@ -558,13 +616,13 @@ export async function streamToTelegram(
       ).catch(() => false);
       if (!ok && footer) {
         await ctx.api
-          .sendMessage(chatId, footer, { parse_mode: "HTML" })
+          .sendMessage(chatId, footer, { parse_mode: "HTML", ...threadOpts })
           .catch(() => {});
       }
     }
   } else if (!lastTextMessageId && footer) {
     await ctx.api
-      .sendMessage(chatId, footer, { parse_mode: "HTML" })
+      .sendMessage(chatId, footer, { parse_mode: "HTML", ...threadOpts })
       .catch(() => {});
   }
 
