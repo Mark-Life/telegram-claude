@@ -117,7 +117,7 @@
     - Project selection callback in forum mode: call `ensureTopic()` instead of just setting `activeProject`
   - Acceptance: Inline button interactions in forum topics correctly route to the right state and reply in the right topic. No cross-topic state pollution.
 
-- [ ] **Task 13: Handle media groups and voice messages with thread context**
+- [x] **Task 13: Handle media groups and voice messages with thread context**
   - Files: `src/bot.ts`
   - Changes:
     - `flushMediaGroup` calls `handlePrompt` — ensure it passes through the correct `ctx` with `message_thread_id`

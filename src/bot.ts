@@ -1315,7 +1315,7 @@ export function createBot(
     }
 
     const { ctx, photos, caption } = group;
-    const state = getState(getUserId(ctx));
+    const state = getState(getStateKey(ctx));
 
     try {
       const photoParts: string[] = [];
@@ -1350,6 +1350,13 @@ export function createBot(
   }
 
   bot.on("message:photo", async (ctx) => {
+    if (forumMode && !getThreadId(ctx)) {
+      await replyToCtx(
+        ctx,
+        "Send messages in a project topic. Use /projects to see available projects."
+      );
+      return;
+    }
     const photos = ctx.message.photo;
     const largest = photos.at(-1)!;
     const filename = `photo_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.jpg`;
