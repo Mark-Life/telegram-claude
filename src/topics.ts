@@ -41,8 +41,19 @@ export function removeTopicMapping(threadId: number) {
   }
 }
 
-/** Find existing topic or create a new forum topic for a project */
-export async function ensureTopic(
+/** Find existing topic or create a new forum topic for a project. Deduplicates concurrent calls. */
+export function ensureTopic(api: Api, chatId: number, projectPath: string) {
+  const pending = pendingTopics.get(projectPath);
+  if (pending) {
+    return pending;
+  }
+
+  const promise = resolveOrCreateTopic(api, chatId, projectPath);
+  pendingTopics.set(projectPath, promise);
+  return promise.finally(() => pendingTopics.delete(projectPath));
+}
+
+async function resolveOrCreateTopic(
   api: Api,
   chatId: number,
   projectPath: string
@@ -58,19 +69,7 @@ export async function ensureTopic(
       removeTopicMapping(existing.threadId);
     }
   }
-
-  const pending = pendingTopics.get(projectPath);
-  if (pending) {
-    return pending;
-  }
-
-  const promise = createTopic(api, chatId, projectPath);
-  pendingTopics.set(projectPath, promise);
-  try {
-    return await promise;
-  } finally {
-    pendingTopics.delete(projectPath);
-  }
+  return createTopic(api, chatId, projectPath);
 }
 
 /** Create a forum topic and persist the mapping */

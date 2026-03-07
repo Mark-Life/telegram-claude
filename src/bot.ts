@@ -1002,7 +1002,8 @@ export function createBot(
           currentPrompt,
           state.activeProject,
           currentCtx.chat!.id,
-          sessionId
+          sessionId,
+          getThreadId(currentCtx)
         );
         const result = await streamToTelegram(currentCtx, events, projectName, {
           branchName,

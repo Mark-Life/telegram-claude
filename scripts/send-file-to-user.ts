@@ -17,6 +17,7 @@ if (!filePath) {
 
 const botToken = process.env.BOT_TOKEN;
 const chatId = process.env.TELEGRAM_CHAT_ID;
+const threadId = process.env.TELEGRAM_THREAD_ID;
 if (!(botToken && chatId)) {
   console.error("Missing BOT_TOKEN or TELEGRAM_CHAT_ID env vars");
   process.exit(1);
@@ -37,6 +38,9 @@ if (blocked) {
 
 const form = new FormData();
 form.append("chat_id", chatId);
+if (threadId) {
+  form.append("message_thread_id", threadId);
+}
 form.append("document", file, basename);
 
 const res = await fetch(

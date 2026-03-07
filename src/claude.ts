@@ -234,7 +234,8 @@ export async function* runClaude(
   prompt: string,
   projectDir: string,
   chatId: number,
-  sessionId?: string
+  sessionId?: string,
+  threadId?: number
 ): AsyncGenerator<ClaudeEvent> {
   const existing = userProcesses.get(processKey);
   if (existing) {
@@ -275,7 +276,11 @@ export async function* runClaude(
     string,
     string | undefined
   >;
-  const env = { ...restEnv, TELEGRAM_CHAT_ID: String(chatId) };
+  const env: Record<string, string | undefined> = {
+    ...restEnv,
+    TELEGRAM_CHAT_ID: String(chatId),
+    ...(threadId != null && { TELEGRAM_THREAD_ID: String(threadId) }),
+  };
   const proc = spawn({
     cmd: args,
     cwd: projectDir,
