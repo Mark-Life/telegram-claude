@@ -763,7 +763,8 @@ export function createBot(
   });
 
   bot.callbackQuery(/^force_send:(.+)$/, async (ctx) => {
-    const stateKey = getStateKey(ctx);
+    const keyFromData = Number.parseInt(ctx.match?.[1], 10);
+    const stateKey = Number.isNaN(keyFromData) ? getStateKey(ctx) : keyFromData;
     const stopped = stopClaude(stateKey);
     await ctx.answerCallbackQuery({
       text: stopped ? "Stopping current task..." : "No active process",
@@ -771,7 +772,8 @@ export function createBot(
   });
 
   bot.callbackQuery(/^clear_queue:(.+)$/, async (ctx) => {
-    const stateKey = getStateKey(ctx);
+    const keyFromData = Number.parseInt(ctx.match?.[1], 10);
+    const stateKey = Number.isNaN(keyFromData) ? getStateKey(ctx) : keyFromData;
     const state = getState(stateKey);
     const count = state.queue.length;
     state.queue = [];
