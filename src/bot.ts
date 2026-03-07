@@ -225,12 +225,6 @@ export function createBot(
   setForumMode(forumMode);
   setStateForumMode(forumMode);
 
-  bot.command("chatid", async (ctx) => {
-    await replyToCtx(ctx, `Chat ID: <code>${ctx.chat.id}</code>`, {
-      parse_mode: "HTML",
-    });
-  });
-
   // Access control middleware
   const botId = Number.parseInt(token.split(":")[0], 10);
   bot.use(async (ctx, next) => {
@@ -245,6 +239,12 @@ export function createBot(
       return;
     }
     await next();
+  });
+
+  bot.command("chatid", async (ctx) => {
+    await replyToCtx(ctx, `Chat ID: <code>${ctx.chat.id}</code>`, {
+      parse_mode: "HTML",
+    });
   });
 
   const buttonToCommand: Record<string, string> = {

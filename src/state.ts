@@ -40,8 +40,13 @@ export function loadPersistedState(key?: number) {
     const text = readFileSync(STATE_FILE, "utf-8");
     const parsed = JSON.parse(text);
 
-    if (_forumMode && parsed.forumMode) {
-      _forumStates = (parsed as ForumPersistedState).topics ?? {};
+    if (_forumMode) {
+      if (parsed.forumMode) {
+        _forumStates = (parsed as ForumPersistedState).topics ?? {};
+      } else {
+        // Migrate: private state on disk but forum mode now active — ignore old private state
+        _forumStates = {};
+      }
       if (key !== undefined) {
         const topicState = _forumStates[String(key)];
         if (topicState) {
@@ -53,6 +58,11 @@ export function loadPersistedState(key?: number) {
           };
         }
       }
+      return null;
+    }
+
+    // Private mode — ignore forum-format state from previous run
+    if (parsed.forumMode) {
       return null;
     }
 

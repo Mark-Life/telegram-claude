@@ -33,14 +33,41 @@ if (Number.isNaN(chatId)) {
   process.exit(1);
 }
 
-const forumMode = chatId < 0;
+const CLEANUP_INTERVAL = 3 * 60 * 60 * 1000;
+
+let forumMode = false;
+
+async function detectForumMode(token: string) {
+  if (chatId >= 0) {
+    return false;
+  }
+  try {
+    const res = await fetch(
+      `https://api.telegram.org/bot${token}/getChat?chat_id=${chatId}`
+    );
+    const data = (await res.json()) as {
+      ok: boolean;
+      result?: { is_forum?: boolean };
+    };
+    if (!(data.ok && data.result?.is_forum)) {
+      console.log(
+        `Chat ${chatId} is a group but not a forum — running in private mode`
+      );
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("Failed to detect forum mode, falling back to private:", e);
+    return false;
+  }
+}
+
+forumMode = await detectForumMode(BOT_TOKEN);
 
 if (forumMode) {
   loadTopicMappings();
   console.log(`Forum mode enabled (chat ${chatId})`);
 }
-
-const CLEANUP_INTERVAL = 3 * 60 * 60 * 1000;
 
 const bot = createBot(BOT_TOKEN, userId, chatId, forumMode, PROJECTS_DIR);
 
@@ -96,6 +123,15 @@ bot.start({
     ).catch((e) => console.error("Failed to set bot commands:", e));
     bot.api
       .sendMessage(chatId, `Bot started at ${new Date().toLocaleString()}`)
-      .catch((e) => console.error("Failed to send startup message:", e));
+      .catch((e) => {
+        // In forum supergroups, this fails if General topic is closed — non-fatal
+        if (forumMode) {
+          console.log(
+            "Startup message skipped (forum General topic may be closed)"
+          );
+        } else {
+          console.error("Failed to send startup message:", e);
+        }
+      });
   },
 });
