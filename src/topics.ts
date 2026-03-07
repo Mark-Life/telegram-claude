@@ -12,6 +12,7 @@ const DATA_DIR = join(import.meta.dirname, "..", ".data");
 const TOPICS_FILE = join(DATA_DIR, "topics.json");
 
 let topicMappings: TopicMapping[] = [];
+const pendingTopics = new Map<string, Promise<number>>();
 
 /** Load topic mappings from disk */
 export function loadTopicMappings() {
@@ -31,6 +32,15 @@ function saveTopicMappings() {
   renameSync(tmp, TOPICS_FILE);
 }
 
+/** Remove a stale topic mapping by thread ID */
+export function removeTopicMapping(threadId: number) {
+  const idx = topicMappings.findIndex((m) => m.threadId === threadId);
+  if (idx !== -1) {
+    topicMappings.splice(idx, 1);
+    saveTopicMappings();
+  }
+}
+
 /** Find existing topic or create a new forum topic for a project */
 export async function ensureTopic(
   api: Api,
@@ -39,9 +49,32 @@ export async function ensureTopic(
 ) {
   const existing = topicMappings.find((m) => m.projectPath === projectPath);
   if (existing) {
-    return existing.threadId;
+    try {
+      await api.sendChatAction(chatId, "typing", {
+        message_thread_id: existing.threadId,
+      });
+      return existing.threadId;
+    } catch {
+      removeTopicMapping(existing.threadId);
+    }
   }
 
+  const pending = pendingTopics.get(projectPath);
+  if (pending) {
+    return pending;
+  }
+
+  const promise = createTopic(api, chatId, projectPath);
+  pendingTopics.set(projectPath, promise);
+  try {
+    return await promise;
+  } finally {
+    pendingTopics.delete(projectPath);
+  }
+}
+
+/** Create a forum topic and persist the mapping */
+async function createTopic(api: Api, chatId: number, projectPath: string) {
   const projectName = basename(projectPath);
   const topic = await api.createForumTopic(chatId, projectName);
   const mapping: TopicMapping = {

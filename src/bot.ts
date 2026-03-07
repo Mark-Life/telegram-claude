@@ -136,6 +136,7 @@ function getStateKey(ctx: Context) {
     return (
       ctx.message?.message_thread_id ??
       ctx.callbackQuery?.message?.message_thread_id ??
+      ctx.chat?.id ??
       0
     );
   }
@@ -933,6 +934,12 @@ export function createBot(
         const projectForThread = getProjectForThread(threadId);
         if (projectForThread && state.activeProject !== projectForThread) {
           setActiveProject(state, projectForThread);
+        } else if (!projectForThread && !state.activeProject) {
+          await replyToCtx(
+            ctx,
+            "This topic is not linked to a project. Use /projects in General to set one up."
+          );
+          return;
         }
       }
     }
