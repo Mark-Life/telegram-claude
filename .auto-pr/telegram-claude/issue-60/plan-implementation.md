@@ -109,7 +109,7 @@
     - If forum mode, register commands with `scope` targeting the specific chat (optional — default scope works)
   - Acceptance: Bot initializes correctly in both modes. Topic mappings loaded on startup. All new parameters wired through.
 
-- [ ] **Task 12: Handle callback queries with thread context**
+- [x] **Task 12: Handle callback queries with thread context**
   - Files: `src/bot.ts`
   - Changes:
     - In all callback query handlers (project selection `project:*`, compose `compose:*`, queue `queue:*`, plan `plan:*`, history `history:*`), extract `threadId` from `ctx.callbackQuery.message?.message_thread_id`
