@@ -40,7 +40,7 @@ if (forumMode) {
   console.log(`Forum mode enabled (chat ${chatId})`);
 }
 
-const CLEANUP_INTERVAL = 3 * 60 * 1000;
+const CLEANUP_INTERVAL = 3 * 60 * 60 * 1000;
 
 const bot = createBot(BOT_TOKEN, userId, chatId, forumMode, PROJECTS_DIR);
 

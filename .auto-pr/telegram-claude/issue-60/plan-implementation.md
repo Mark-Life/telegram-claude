@@ -100,7 +100,7 @@
     - Call `loadTopicMappings()` from topics.ts during startup
   - Acceptance: Forum mode state persists per-topic activeProject and sessions across restarts. Private mode persistence unchanged. State file format is backwards-compatible.
 
-- [ ] **Task 11: Update `src/index.ts` — wire everything together**
+- [x] **Task 11: Update `src/index.ts` — wire everything together**
   - Files: `src/index.ts`
   - Changes:
     - Pass `ALLOWED_CHAT_ID` and `forumMode` to `createBot(token, allowedUserId, chatId, forumMode, projectsDir)`
