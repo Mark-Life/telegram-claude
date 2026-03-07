@@ -368,17 +368,6 @@ export function hasActiveProcess(processKey: number) {
   return !!entry && !entry.ac.signal.aborted;
 }
 
-/** Get all active process keys */
-export function getActiveProcessKeys() {
-  const keys: number[] = [];
-  for (const [key, entry] of userProcesses) {
-    if (!entry.ac.signal.aborted) {
-      keys.push(key);
-    }
-  }
-  return keys;
-}
-
 /** Abort all active Claude processes (used during shutdown) */
 export function stopAll() {
   for (const entry of userProcesses.values()) {
