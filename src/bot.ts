@@ -48,6 +48,17 @@ interface UserState {
 const userStates = new Map<number, UserState>();
 const HISTORY_PAGE_SIZE = 5;
 const MAX_COMPOSE_MESSAGES = 50;
+const MEDIA_GROUP_DEBOUNCE_MS = 500;
+
+interface MediaGroupEntry {
+  caption: string;
+  ctx: Context;
+  photos: { fileId: string; filename: string }[];
+  timer: ReturnType<typeof setTimeout>;
+}
+
+/** Pending media groups keyed by media_group_id */
+const mediaGroupBuffers = new Map<string, MediaGroupEntry>();
 
 /** Escape HTML special characters for Telegram */
 function escapeHtml(text: string) {
@@ -187,12 +198,16 @@ export function createBot(
   });
 
   // Compose mode interceptor: capture non-command messages when composing
+  // Media group photos pass through to the photo handler for batching
   bot.on("message", async (ctx, next) => {
     const state = getState(ctx.from.id);
     if (!state.composeMessages) {
       return next();
     }
     if (ctx.message?.text?.startsWith("/")) {
+      return next();
+    }
+    if (ctx.message?.photo && ctx.message.media_group_id) {
       return next();
     }
     await collectComposeMessage(ctx, state);
@@ -1107,11 +1122,71 @@ export function createBot(
     }
   });
 
+  /** Flush a completed media group: save all photos and send as one prompt */
+  async function flushMediaGroup(groupId: string) {
+    const group = mediaGroupBuffers.get(groupId);
+    mediaGroupBuffers.delete(groupId);
+    if (!group) return;
+
+    const { ctx, photos, caption } = group;
+    const state = getState(getUserId(ctx));
+
+    try {
+      const photoParts: string[] = [];
+      for (const photo of photos) {
+        const dest = await saveUploadedFile(ctx, photo.filename, photo.fileId);
+        photoParts.push(`[Photo saved at ${dest}]`);
+      }
+      const text = caption || "See the attached photos.";
+      const prompt = `${text}\n\n${photoParts.join("\n")}`;
+
+      if (state.composeMessages) {
+        for (const part of photoParts) {
+          state.composeMessages.push({ type: "photo", content: `${part}\n${caption}`.trim() });
+        }
+        await updateComposeStatus(ctx, state);
+      } else {
+        const fullPrompt = buildPromptWithReplyContext(ctx, prompt, botId);
+        handlePrompt(ctx, fullPrompt).catch((e) =>
+          console.error("handlePrompt error:", e)
+        );
+      }
+    } catch (e) {
+      console.error("Media group upload error:", e);
+      await ctx.reply(
+        `Photo upload failed: ${e instanceof Error ? e.message : "unknown error"}`
+      );
+    }
+  }
+
   bot.on("message:photo", async (ctx) => {
     const photos = ctx.message.photo;
     const largest = photos.at(-1)!;
-    const filename = `photo_${Date.now()}.jpg`;
+    const filename = `photo_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.jpg`;
+    const mediaGroupId = ctx.message.media_group_id;
 
+    if (mediaGroupId) {
+      const existing = mediaGroupBuffers.get(mediaGroupId);
+      if (existing) {
+        clearTimeout(existing.timer);
+        existing.photos.push({ fileId: largest.file_id, filename });
+        if (ctx.message.caption) {
+          existing.caption = ctx.message.caption;
+        }
+        existing.timer = setTimeout(() => flushMediaGroup(mediaGroupId), MEDIA_GROUP_DEBOUNCE_MS);
+      } else {
+        const timer = setTimeout(() => flushMediaGroup(mediaGroupId), MEDIA_GROUP_DEBOUNCE_MS);
+        mediaGroupBuffers.set(mediaGroupId, {
+          photos: [{ fileId: largest.file_id, filename }],
+          caption: ctx.message.caption ?? "",
+          ctx,
+          timer,
+        });
+      }
+      return;
+    }
+
+    // Single photo (no media group)
     try {
       const dest = await saveUploadedFile(ctx, filename, largest.file_id);
       if (!dest) {
