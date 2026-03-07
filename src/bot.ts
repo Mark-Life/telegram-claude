@@ -26,7 +26,11 @@ import {
   updateSession,
 } from "./state";
 import { escapeHtml, splitText, streamToTelegram } from "./telegram";
-import { ensureTopic, getProjectForThread } from "./topics";
+import {
+  TopicPermissionError,
+  ensureTopic,
+  getProjectForThread,
+} from "./topics";
 import { transcribeAudio } from "./transcribe";
 
 interface QueuedMessage {
@@ -323,7 +327,16 @@ export function createBot(
     }
 
     if (forumMode && !isGeneral) {
-      const threadId = await ensureTopic(ctx.api, chatId, fullPath);
+      let threadId: number;
+      try {
+        threadId = await ensureTopic(ctx.api, chatId, fullPath);
+      } catch (e) {
+        if (e instanceof TopicPermissionError) {
+          await ctx.answerCallbackQuery({ text: e.message });
+          return;
+        }
+        throw e;
+      }
       const topicState = getState(threadId);
       setActiveProject(topicState, fullPath);
       await ctx.answerCallbackQuery({

@@ -97,15 +97,33 @@ async function resolveOrCreateTopic(
 /** Create a forum topic and persist the mapping */
 async function createTopic(api: Api, chatId: number, projectPath: string) {
   const projectName = basename(projectPath);
-  const topic = await api.createForumTopic(chatId, projectName);
-  const mapping: TopicMapping = {
-    threadId: topic.message_thread_id,
-    projectPath,
-    projectName,
-  };
-  topicMappings.push(mapping);
-  saveTopicMappings();
-  return topic.message_thread_id;
+  try {
+    const topic = await api.createForumTopic(chatId, projectName);
+    const mapping: TopicMapping = {
+      threadId: topic.message_thread_id,
+      projectPath,
+      projectName,
+    };
+    topicMappings.push(mapping);
+    saveTopicMappings();
+    return topic.message_thread_id;
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("not enough rights")) {
+      throw new TopicPermissionError(projectName);
+    }
+    throw e;
+  }
+}
+
+/** Thrown when the bot lacks "Manage Topics" permission */
+export class TopicPermissionError extends Error {
+  constructor(projectName: string) {
+    super(
+      `Cannot create topic "${projectName}": bot needs "Manage Topics" permission in group settings.`
+    );
+    this.name = "TopicPermissionError";
+  }
 }
 
 /** Get project path for a thread ID. Removes mapping if project folder no longer exists. */
