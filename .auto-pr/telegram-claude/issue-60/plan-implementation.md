@@ -9,14 +9,14 @@
     - Change startup message: if `forumMode`, send to `ALLOWED_CHAT_ID` (General topic, no `message_thread_id`); else send to `ALLOWED_USER_ID` as before
   - Acceptance: Bot starts in private mode when `ALLOWED_CHAT_ID` unset. Bot starts in forum mode when `ALLOWED_CHAT_ID` is negative. Startup message goes to correct chat.
 
-- [ ] **Task 2: Add `/chatid` command (unprotected)**
+- [x] **Task 2: Add `/chatid` command (unprotected)**
   - Files: `src/bot.ts`, `src/index.ts`
   - Changes:
     - In `bot.ts`, register `bot.command("chatid", ...)` **before** the access control middleware (~line 167). Handler replies with `` `Chat ID: ${ctx.chat.id}` `` using HTML parse mode
     - In `src/index.ts`, add `chatid` to the `setMyCommands` list with description "Show chat ID"
   - Acceptance: `/chatid` works in any chat (including groups where the bot isn't configured), returns the numeric chat ID. Does not require the user to be `ALLOWED_USER_ID`.
 
-- [ ] **Task 3: Create `src/topics.ts` — topic-project mapping**
+- [x] **Task 3: Create `src/topics.ts` — topic-project mapping**
   - Files: `src/topics.ts` (new file)
   - Changes:
     - Define `TopicMapping` type: `{ threadId: number, projectPath: string, projectName: string }`
