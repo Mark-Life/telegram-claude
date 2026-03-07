@@ -57,7 +57,7 @@
     - `editMessageText` does not need `message_thread_id` (it uses chatId + messageId which is already unique)
   - Acceptance: In forum mode, all streamed messages appear in the correct topic. Parallel streams to different topics don't interfere. Draft mode uses unique draftIds per topic. Private mode behavior unchanged (threadId undefined, no `message_thread_id` sent).
 
-- [ ] **Task 7: Update `src/bot.ts` message sending — thread-aware replies**
+- [x] **Task 7: Update `src/bot.ts` message sending — thread-aware replies**
   - Files: `src/bot.ts`
   - Changes:
     - Add helper function `replyToCtx(ctx, text, other?)` that calls `ctx.reply(text, { ...other, ...(getThreadId(ctx) ? { message_thread_id: getThreadId(ctx) } : {}) })`

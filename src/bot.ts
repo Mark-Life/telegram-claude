@@ -143,6 +143,17 @@ function getThreadId(ctx: Context): number | undefined {
   );
 }
 
+/** Reply with thread-awareness: adds message_thread_id in forum mode */
+function replyToCtx(
+  ctx: Context,
+  text: string,
+  other?: Record<string, unknown>
+) {
+  const threadId = getThreadId(ctx);
+  const threadOpts = threadId ? { message_thread_id: threadId } : {};
+  return ctx.reply(text, { ...other, ...threadOpts });
+}
+
 /** Get or create user state */
 function getState(id: number): UserState {
   let state = userStates.get(id);
@@ -202,7 +213,7 @@ export function createBot(
   setForumMode(forumMode);
 
   bot.command("chatid", async (ctx) => {
-    await ctx.reply(`Chat ID: <code>${ctx.chat.id}</code>`, {
+    await replyToCtx(ctx, `Chat ID: <code>${ctx.chat.id}</code>`, {
       parse_mode: "HTML",
     });
   });
@@ -217,7 +228,7 @@ export function createBot(
       console.log(
         `Auth rejected: from=${ctx.from.id} allowed=${allowedUserId}`
       );
-      await ctx.reply("Telegram User is Unauthorized.");
+      await replyToCtx(ctx, "Telegram User is Unauthorized.");
       return;
     }
     await next();
@@ -261,7 +272,8 @@ export function createBot(
   bot.command("start", async (ctx) => {
     const state = getState(getStateKey(ctx));
     const project = state.activeProject || "(none)";
-    await ctx.reply(
+    await replyToCtx(
+      ctx,
       `Claude Code bot ready.\nActive project: ${project}\n\nCommands:\n/projects - switch project\n/history - resume a past session\n/stop - kill active process\n/status - current state\n/new - reset session`,
       { reply_markup: mainKeyboard }
     );
@@ -270,7 +282,7 @@ export function createBot(
   bot.command("projects", async (ctx) => {
     const projects = listProjects(projectsDir);
     if (projects.length === 0) {
-      await ctx.reply(`No projects found in ${projectsDir}`, {
+      await replyToCtx(ctx, `No projects found in ${projectsDir}`, {
         reply_markup: mainKeyboard,
       });
       return;
@@ -281,7 +293,7 @@ export function createBot(
     for (const name of projects) {
       keyboard.text(name, `project:${name}`).row();
     }
-    await ctx.reply("Select a project:", { reply_markup: keyboard });
+    await replyToCtx(ctx, "Select a project:", { reply_markup: keyboard });
   });
 
   bot.callbackQuery(/^project:(.+)$/, async (ctx) => {
@@ -346,7 +358,7 @@ export function createBot(
     const msg = stopped
       ? `Process stopped.${hadQueue ? " Queue cleared." : ""}`
       : "No active process.";
-    await ctx.reply(msg, { reply_markup: mainKeyboard });
+    await replyToCtx(ctx, msg, { reply_markup: mainKeyboard });
   });
 
   bot.command("status", async (ctx) => {
@@ -370,14 +382,16 @@ export function createBot(
       ? `\nComposing: ${state.composeMessages.length} messages`
       : "";
 
-    await ctx.reply(
+    await replyToCtx(
+      ctx,
       `Project: ${project}\nRunning: ${running}\nSessions: ${sessionCount}${branchLine}${queueLine}${composeLine}`,
       { reply_markup: mainKeyboard }
     );
   });
 
   bot.command("help", async (ctx) => {
-    await ctx.reply(
+    await replyToCtx(
+      ctx,
       [
         "<b>Commands:</b>",
         "/projects — switch active project",
@@ -401,7 +415,7 @@ export function createBot(
   bot.command("branch", async (ctx) => {
     const state = getState(getStateKey(ctx));
     if (!state.activeProject || state.activeProject === projectsDir) {
-      await ctx.reply("No project selected or in general mode.", {
+      await replyToCtx(ctx, "No project selected or in general mode.", {
         reply_markup: mainKeyboard,
       });
       return;
@@ -409,7 +423,9 @@ export function createBot(
 
     const current = getCurrentBranch(state.activeProject);
     if (!current) {
-      await ctx.reply("Not a git repository.", { reply_markup: mainKeyboard });
+      await replyToCtx(ctx, "Not a git repository.", {
+        reply_markup: mainKeyboard,
+      });
       return;
     }
 
@@ -435,7 +451,7 @@ export function createBot(
     if (others.length >= 49) {
       lines.push("<i>...showing most recent branches only</i>");
     }
-    await ctx.reply(lines.join("\n"), {
+    await replyToCtx(ctx, lines.join("\n"), {
       parse_mode: "HTML",
       reply_markup: mainKeyboard,
     });
@@ -444,7 +460,7 @@ export function createBot(
   bot.command("pr", async (ctx) => {
     const state = getState(getStateKey(ctx));
     if (!state.activeProject || state.activeProject === projectsDir) {
-      await ctx.reply("No project selected or in general mode.", {
+      await replyToCtx(ctx, "No project selected or in general mode.", {
         reply_markup: mainKeyboard,
       });
       return;
@@ -452,13 +468,13 @@ export function createBot(
 
     const prs = listOpenPRs(state.activeProject);
     if (prs === null) {
-      await ctx.reply("Could not fetch PRs. Is gh CLI authenticated?", {
+      await replyToCtx(ctx, "Could not fetch PRs. Is gh CLI authenticated?", {
         reply_markup: mainKeyboard,
       });
       return;
     }
     if (prs.length === 0) {
-      await ctx.reply("No open PRs.", { reply_markup: mainKeyboard });
+      await replyToCtx(ctx, "No open PRs.", { reply_markup: mainKeyboard });
       return;
     }
 
@@ -466,7 +482,7 @@ export function createBot(
       (pr) =>
         `#${pr.number} <a href="${escapeHtml(pr.url)}">${escapeHtml(pr.title)}</a> (<code>${escapeHtml(pr.headRefName)}</code>)`
     );
-    await ctx.reply(lines.join("\n"), {
+    await replyToCtx(ctx, lines.join("\n"), {
       parse_mode: "HTML",
       reply_markup: mainKeyboard,
     });
@@ -483,7 +499,8 @@ export function createBot(
     state.composeMessages = undefined;
     await cleanupQueueStatus(state, ctx);
     await cleanupComposeStatus(state, ctx);
-    await ctx.reply(
+    await replyToCtx(
+      ctx,
       "Session cleared. Next message starts a fresh conversation.",
       { reply_markup: mainKeyboard }
     );
@@ -493,7 +510,8 @@ export function createBot(
     const stateKey = getStateKey(ctx);
     const state = getState(stateKey);
     if (state.composeMessages) {
-      await ctx.reply(
+      await replyToCtx(
+        ctx,
         `Already composing (${state.composeMessages.length} messages). /send when done.`
       );
       return;
@@ -502,7 +520,8 @@ export function createBot(
     const keyboard = new InlineKeyboard()
       .text("Send", `compose_send:${stateKey}`)
       .text("Cancel", `compose_cancel:${stateKey}`);
-    const msg = await ctx.reply(
+    const msg = await replyToCtx(
+      ctx,
       "Compose mode. Send messages — /send when done.",
       { reply_markup: keyboard }
     );
@@ -512,13 +531,15 @@ export function createBot(
   /** Execute send: combine composed messages and send to Claude */
   async function executeSend(ctx: Context, state: UserState) {
     if (!state.composeMessages) {
-      await ctx.reply("Not in compose mode.", { reply_markup: mainKeyboard });
+      await replyToCtx(ctx, "Not in compose mode.", {
+        reply_markup: mainKeyboard,
+      });
       return;
     }
     if (state.composeMessages.length === 0) {
       state.composeMessages = undefined;
       await cleanupComposeStatus(state, ctx);
-      await ctx.reply("Nothing to send. Compose cancelled.", {
+      await replyToCtx(ctx, "Nothing to send. Compose cancelled.", {
         reply_markup: mainKeyboard,
       });
       return;
@@ -534,13 +555,15 @@ export function createBot(
   /** Execute cancel: discard composed messages */
   async function executeCancel(ctx: Context, state: UserState) {
     if (!state.composeMessages) {
-      await ctx.reply("Not in compose mode.", { reply_markup: mainKeyboard });
+      await replyToCtx(ctx, "Not in compose mode.", {
+        reply_markup: mainKeyboard,
+      });
       return;
     }
     const count = state.composeMessages.length;
     state.composeMessages = undefined;
     await cleanupComposeStatus(state, ctx);
-    await ctx.reply(`Compose cancelled. ${count} message(s) discarded.`, {
+    await replyToCtx(ctx, `Compose cancelled. ${count} message(s) discarded.`, {
       reply_markup: mainKeyboard,
     });
   }
@@ -617,13 +640,13 @@ export function createBot(
     const result = buildHistoryMessage(0);
 
     if (!result) {
-      await ctx.reply("No session history found.", {
+      await replyToCtx(ctx, "No session history found.", {
         reply_markup: mainKeyboard,
       });
       return;
     }
 
-    await ctx.reply(result.text, {
+    await replyToCtx(ctx, result.text, {
       reply_markup: result.keyboard,
       parse_mode: "HTML",
     });
@@ -704,7 +727,7 @@ export function createBot(
     try {
       planContent = readFileSync(planPath, "utf-8");
     } catch {
-      await ctx.reply("Could not read plan file.", {
+      await replyToCtx(ctx, "Could not read plan file.", {
         reply_markup: mainKeyboard,
       });
       return;
@@ -847,9 +870,13 @@ export function createBot(
 
     if (!state.activeProject) {
       setActiveProject(state, projectsDir);
-      await ctx.reply("No project selected. Using General (all projects).", {
-        reply_markup: mainKeyboard,
-      });
+      await replyToCtx(
+        ctx,
+        "No project selected. Using General (all projects).",
+        {
+          reply_markup: mainKeyboard,
+        }
+      );
     }
 
     if (state.pendingPlan) {
@@ -931,12 +958,11 @@ export function createBot(
         currentPrompt.length > 200
           ? `${currentPrompt.slice(0, 200)}...`
           : currentPrompt;
-      await currentCtx
-        .reply(
-          `<b>▶ Processing queued message</b>${queueInfo}\n<pre>${escapeHtml(preview)}</pre>`,
-          { parse_mode: "HTML" }
-        )
-        .catch(() => {});
+      await replyToCtx(
+        currentCtx,
+        `<b>▶ Processing queued message</b>${queueInfo}\n<pre>${escapeHtml(preview)}</pre>`,
+        { parse_mode: "HTML" }
+      ).catch(() => {});
     }
   }
 
@@ -955,7 +981,7 @@ export function createBot(
         })
         .catch(() => {});
     } else {
-      const msg = await ctx.reply(text, { reply_markup: keyboard });
+      const msg = await replyToCtx(ctx, text, { reply_markup: keyboard });
       state.queueStatusMessageId = msg.message_id;
     }
   }
@@ -985,7 +1011,7 @@ export function createBot(
         })
         .catch(() => {});
     } else {
-      const msg = await ctx.reply(text, { reply_markup: keyboard });
+      const msg = await replyToCtx(ctx, text, { reply_markup: keyboard });
       state.composeStatusMessageId = msg.message_id;
     }
   }
@@ -1004,7 +1030,8 @@ export function createBot(
   async function collectComposeMessage(ctx: Context, state: UserState) {
     const messages = state.composeMessages!;
     if (messages.length >= MAX_COMPOSE_MESSAGES) {
-      await ctx.reply(
+      await replyToCtx(
+        ctx,
         `Compose limit reached (${MAX_COMPOSE_MESSAGES} messages). Use /send to submit or /stop to clear.`
       );
       return;
@@ -1015,7 +1042,7 @@ export function createBot(
         const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
         const res = await fetch(url);
         const buffer = Buffer.from(await res.arrayBuffer());
-        const status = await ctx.reply("Transcribing...", {
+        const status = await replyToCtx(ctx, "Transcribing...", {
           reply_parameters: { message_id: ctx.message.message_id },
         });
         const transcription = await transcribeAudio(buffer, "voice.ogg");
@@ -1070,7 +1097,9 @@ export function createBot(
       }
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : "unknown error";
-      await ctx.reply(`Error collecting message: ${errMsg}`).catch(() => {});
+      await replyToCtx(ctx, `Error collecting message: ${errMsg}`).catch(
+        () => {}
+      );
       return;
     }
     await updateComposeStatus(ctx, state);
@@ -1088,9 +1117,13 @@ export function createBot(
 
     if (!state.activeProject) {
       setActiveProject(state, projectsDir);
-      await ctx.reply("No project selected. Using General (all projects).", {
-        reply_markup: mainKeyboard,
-      });
+      await replyToCtx(
+        ctx,
+        "No project selected. Using General (all projects).",
+        {
+          reply_markup: mainKeyboard,
+        }
+      );
     }
 
     let prompt: string;
@@ -1100,7 +1133,7 @@ export function createBot(
       const res = await fetch(url);
       const buffer = Buffer.from(await res.arrayBuffer());
 
-      const status = await ctx.reply("Transcribing...", {
+      const status = await replyToCtx(ctx, "Transcribing...", {
         reply_parameters: { message_id: ctx.message.message_id },
       });
       prompt = await transcribeAudio(buffer, "voice.ogg");
@@ -1117,7 +1150,8 @@ export function createBot(
       );
     } catch (e) {
       console.error("Voice transcription error:", e);
-      await ctx.reply(
+      await replyToCtx(
+        ctx,
         `Transcription failed: ${e instanceof Error ? e.message : "unknown error"}`
       );
       return;
@@ -1138,9 +1172,13 @@ export function createBot(
     const state = getState(getStateKey(ctx));
     if (!state.activeProject) {
       setActiveProject(state, projectsDir);
-      await ctx.reply("No project selected. Using General (all projects).", {
-        reply_markup: mainKeyboard,
-      });
+      await replyToCtx(
+        ctx,
+        "No project selected. Using General (all projects).",
+        {
+          reply_markup: mainKeyboard,
+        }
+      );
     }
 
     const file = fileId ? await ctx.api.getFile(fileId) : await ctx.getFile();
@@ -1173,7 +1211,8 @@ export function createBot(
       );
     } catch (e) {
       console.error("Document upload error:", e);
-      await ctx.reply(
+      await replyToCtx(
+        ctx,
         `File upload failed: ${e instanceof Error ? e.message : "unknown error"}`
       );
     }
@@ -1215,7 +1254,8 @@ export function createBot(
       }
     } catch (e) {
       console.error("Media group upload error:", e);
-      await ctx.reply(
+      await replyToCtx(
+        ctx,
         `Photo upload failed: ${e instanceof Error ? e.message : "unknown error"}`
       );
     }
@@ -1269,7 +1309,8 @@ export function createBot(
       );
     } catch (e) {
       console.error("Photo upload error:", e);
-      await ctx.reply(
+      await replyToCtx(
+        ctx,
         `Photo upload failed: ${e instanceof Error ? e.message : "unknown error"}`
       );
     }
