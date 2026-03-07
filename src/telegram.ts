@@ -202,15 +202,17 @@ async function safeSendMessage(
   ctx: Context,
   chatId: number,
   html: string,
-  rawText?: string
+  rawText?: string,
+  extraOpts?: Record<string, unknown>
 ) {
   const displayText = html || "...";
   try {
     return await ctx.api.sendMessage(chatId, displayText, {
       parse_mode: "HTML",
+      ...extraOpts,
     });
   } catch {
-    return await ctx.api.sendMessage(chatId, rawText ?? displayText);
+    return await ctx.api.sendMessage(chatId, rawText ?? displayText, extraOpts);
   }
 }
 
@@ -225,6 +227,7 @@ interface StreamResult {
 
 interface StreamOptions {
   branchName?: string | null;
+  threadId?: number;
 }
 
 type MessageMode = "text" | "tools" | "thinking" | "none";
@@ -238,6 +241,8 @@ export async function streamToTelegram(
 ): Promise<StreamResult> {
   const chatId = ctx.chat!.id;
   const branchName = options?.branchName;
+  const threadId = options?.threadId;
+  const threadOpts = threadId ? { message_thread_id: threadId } : {};
   const result: StreamResult = {};
 
   let mode: MessageMode = "none";
@@ -249,11 +254,11 @@ export async function streamToTelegram(
   let thinkingText = "";
   let lastTextMessageId = 0;
   let useDrafts: boolean | null = null;
-  const draftId = chatId;
+  const draftId = threadId ?? chatId;
 
   /** Send a new Telegram message and track its ID */
   const sendNew = async (text: string, parseMode?: "HTML") => {
-    const opts: Record<string, unknown> = {};
+    const opts: Record<string, unknown> = { ...threadOpts };
     if (parseMode) {
       opts.parse_mode = parseMode;
     }
@@ -292,7 +297,8 @@ export async function streamToTelegram(
           ctx,
           chatId,
           markdownToTelegramHtml(chunk),
-          chunk
+          chunk,
+          threadOpts
         );
       } else {
         await safeEditMessage(
@@ -384,7 +390,8 @@ export async function streamToTelegram(
           ctx,
           chatId,
           markdownToTelegramHtml(accumulated),
-          accumulated
+          accumulated,
+          threadOpts
         );
         lastTextMessageId = sent?.message_id ?? 0;
       } else {
@@ -398,7 +405,7 @@ export async function streamToTelegram(
     if (mode === "thinking" && thinkingText) {
       if (useDrafts) {
         const { html, plainText } = renderThinkingHtml(thinkingText);
-        await safeSendMessage(ctx, chatId, html, plainText);
+        await safeSendMessage(ctx, chatId, html, plainText, threadOpts);
       } else {
         await flushThinking(true);
       }
@@ -420,9 +427,9 @@ export async function streamToTelegram(
   }, EDIT_INTERVAL_MS);
 
   const typingTimer = setInterval(() => {
-    ctx.api.sendChatAction(chatId, "typing").catch(() => {});
+    ctx.api.sendChatAction(chatId, "typing", threadOpts).catch(() => {});
   }, TYPING_INTERVAL_MS);
-  ctx.api.sendChatAction(chatId, "typing").catch(() => {});
+  ctx.api.sendChatAction(chatId, "typing", threadOpts).catch(() => {});
 
   try {
     for await (const event of events) {
@@ -489,7 +496,7 @@ export async function streamToTelegram(
         if (mode === "thinking" && thinkingText) {
           if (useDrafts) {
             const { html, plainText } = renderThinkingHtml(thinkingText);
-            await safeSendMessage(ctx, chatId, html, plainText);
+            await safeSendMessage(ctx, chatId, html, plainText, threadOpts);
           } else {
             await flushThinking(true);
           }
@@ -546,7 +553,8 @@ export async function streamToTelegram(
         ctx,
         chatId,
         display || "...",
-        accumulated
+        accumulated,
+        threadOpts
       );
       lastTextMessageId = sent?.message_id ?? 0;
     } else {
@@ -558,13 +566,13 @@ export async function streamToTelegram(
       ).catch(() => false);
       if (!ok && footer) {
         await ctx.api
-          .sendMessage(chatId, footer, { parse_mode: "HTML" })
+          .sendMessage(chatId, footer, { parse_mode: "HTML", ...threadOpts })
           .catch(() => {});
       }
     }
   } else if (!lastTextMessageId && footer) {
     await ctx.api
-      .sendMessage(chatId, footer, { parse_mode: "HTML" })
+      .sendMessage(chatId, footer, { parse_mode: "HTML", ...threadOpts })
       .catch(() => {});
   }
 

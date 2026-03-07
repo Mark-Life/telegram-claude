@@ -47,7 +47,7 @@
     - Update JSDoc on exported functions to document the dual semantics
   - Acceptance: `runClaude(threadId, ...)` in forum mode allows parallel processes (different threadIds). `runClaude(userId, ...)` in private mode still enforces one-process-per-user. All callers pass the correct key.
 
-- [ ] **Task 6: Update `src/telegram.ts` — add `threadId` to all outgoing messages**
+- [x] **Task 6: Update `src/telegram.ts` — add `threadId` to all outgoing messages**
   - Files: `src/telegram.ts`
   - Changes:
     - Add `threadId?: number` to `StreamOptions` type
