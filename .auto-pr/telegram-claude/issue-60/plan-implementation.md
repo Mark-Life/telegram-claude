@@ -125,7 +125,7 @@
     - Document handler (file uploads): same verification
   - Acceptance: Voice messages, photos, and documents sent in a project topic are routed to the correct project and responses appear in the same topic.
 
-- [ ] **Task 14: Verify everything works together**
+- [x] **Task 14: Verify everything works together**
   - Files: All modified files
   - Changes: No code changes — testing and verification
   - Acceptance criteria:
