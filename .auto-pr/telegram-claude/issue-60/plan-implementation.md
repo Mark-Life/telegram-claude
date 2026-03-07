@@ -78,7 +78,7 @@
     - In forum mode, `/projects` in General shows all projects; `/projects` in a project topic shows current project info
   - Acceptance: Selecting a project in forum mode creates a topic (or finds existing one). User can navigate to the topic. Private mode project selection unchanged.
 
-- [ ] **Task 9: Update `src/bot.ts` — General topic control plane**
+- [x] **Task 9: Update `src/bot.ts` — General topic control plane**
   - Files: `src/bot.ts`
   - Changes:
     - In forum mode, detect General topic messages: `threadId` is undefined/0

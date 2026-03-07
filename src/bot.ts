@@ -7,7 +7,12 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import { Bot, type Context, InlineKeyboard, Keyboard } from "grammy";
-import { hasActiveProcess, runClaude, stopClaude } from "./claude";
+import {
+  getActiveProcessKeys,
+  hasActiveProcess,
+  runClaude,
+  stopClaude,
+} from "./claude";
 import {
   getCurrentBranch,
   getGitHubUrl,
@@ -360,6 +365,26 @@ export function createBot(
   });
 
   bot.command("stop", async (ctx) => {
+    if (forumMode && !getThreadId(ctx)) {
+      const activeKeys = getActiveProcessKeys();
+      if (activeKeys.length === 0) {
+        await replyToCtx(ctx, "No active processes.", {
+          reply_markup: mainKeyboard,
+        });
+        return;
+      }
+      const keyboard = new InlineKeyboard();
+      for (const key of activeKeys) {
+        const projectPath = getProjectForThread(key);
+        const name = projectPath ? basename(projectPath) : `thread:${key}`;
+        keyboard.text(`Stop: ${name}`, `force_send:${key}`).row();
+      }
+      await replyToCtx(ctx, "Active processes:", {
+        reply_markup: keyboard,
+      });
+      return;
+    }
+
     const stateKey = getStateKey(ctx);
     const state = getState(stateKey);
     const stopped = stopClaude(stateKey);
@@ -376,6 +401,26 @@ export function createBot(
   });
 
   bot.command("status", async (ctx) => {
+    if (forumMode && !getThreadId(ctx)) {
+      const activeKeys = getActiveProcessKeys();
+      if (activeKeys.length === 0) {
+        await replyToCtx(ctx, "No active processes.", {
+          reply_markup: mainKeyboard,
+        });
+        return;
+      }
+      const lines = activeKeys.map((key) => {
+        const projectPath = getProjectForThread(key);
+        const name = projectPath ? basename(projectPath) : `thread:${key}`;
+        return `- ${name}: running`;
+      });
+      await replyToCtx(ctx, `<b>Active processes:</b>\n${lines.join("\n")}`, {
+        parse_mode: "HTML",
+        reply_markup: mainKeyboard,
+      });
+      return;
+    }
+
     const stateKey = getStateKey(ctx);
     const state = getState(stateKey);
     const project = state.activeProject
@@ -1120,6 +1165,13 @@ export function createBot(
   }
 
   bot.on("message:text", (ctx) => {
+    if (forumMode && !getThreadId(ctx)) {
+      replyToCtx(
+        ctx,
+        "Send messages in a project topic. Use /projects to see available projects."
+      ).catch(() => {});
+      return;
+    }
     const prompt = buildPromptWithReplyContext(ctx, ctx.message.text, botId);
     handlePrompt(ctx, prompt).catch((e) =>
       console.error("handlePrompt error:", e)
@@ -1127,6 +1179,13 @@ export function createBot(
   });
 
   bot.on("message:voice", async (ctx) => {
+    if (forumMode && !getThreadId(ctx)) {
+      await replyToCtx(
+        ctx,
+        "Send messages in a project topic. Use /projects to see available projects."
+      );
+      return;
+    }
     const state = getState(getStateKey(ctx));
 
     if (!state.activeProject) {
@@ -1208,6 +1267,13 @@ export function createBot(
   }
 
   bot.on("message:document", async (ctx) => {
+    if (forumMode && !getThreadId(ctx)) {
+      await replyToCtx(
+        ctx,
+        "Send files in a project topic. Use /projects to see available projects."
+      );
+      return;
+    }
     const doc = ctx.message.document;
     const filename = doc.file_name ?? `file_${Date.now()}`;
 
