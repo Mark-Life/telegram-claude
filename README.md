@@ -1,5 +1,7 @@
 # telegram-claude
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Telegram bot interface for Claude Code on a VPS. Message the bot from any device, it runs Claude Code in your project directories and streams back results.
 
 ## Features
@@ -134,3 +136,11 @@ Use `/compose` to batch multiple messages into a single Claude prompt. Useful fo
 ## Stack
 
 TypeScript, Bun, [grammy](https://grammy.dev/), [Groq SDK](https://github.com/groq/groq-typescript)
+
+## Contributing
+
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## License
+
+[MIT](LICENSE)
