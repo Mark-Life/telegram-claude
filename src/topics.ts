@@ -1,4 +1,10 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 import type { Api } from "grammy";
 
@@ -14,11 +20,19 @@ const TOPICS_FILE = join(DATA_DIR, "topics.json");
 let topicMappings: TopicMapping[] = [];
 const pendingTopics = new Map<string, Promise<number>>();
 
-/** Load topic mappings from disk */
+/** Load topic mappings from disk. Removes mappings for project paths that no longer exist. */
 export function loadTopicMappings() {
   try {
     const text = readFileSync(TOPICS_FILE, "utf-8");
-    topicMappings = JSON.parse(text) as TopicMapping[];
+    const loaded = JSON.parse(text) as TopicMapping[];
+    const valid = loaded.filter((m) => existsSync(m.projectPath));
+    if (valid.length < loaded.length) {
+      console.log(
+        `[topics] Removed ${loaded.length - valid.length} stale mapping(s) with missing project paths`
+      );
+    }
+    topicMappings = valid;
+    if (valid.length < loaded.length) saveTopicMappings();
   } catch {
     topicMappings = [];
   }
@@ -86,9 +100,17 @@ async function createTopic(api: Api, chatId: number, projectPath: string) {
   return topic.message_thread_id;
 }
 
-/** Get project path for a thread ID */
+/** Get project path for a thread ID. Removes mapping if project folder no longer exists. */
 export function getProjectForThread(threadId: number) {
-  return topicMappings.find((m) => m.threadId === threadId)?.projectPath;
+  const mapping = topicMappings.find((m) => m.threadId === threadId);
+  if (!mapping) {
+    return undefined;
+  }
+  if (!existsSync(mapping.projectPath)) {
+    removeTopicMapping(threadId);
+    return undefined;
+  }
+  return mapping.projectPath;
 }
 
 /** Get thread ID for a project path */

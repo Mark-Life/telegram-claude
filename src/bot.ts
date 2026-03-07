@@ -886,9 +886,11 @@ export function createBot(
       const threadId = getThreadId(ctx);
       if (threadId) {
         const projectForThread = getProjectForThread(threadId);
-        if (projectForThread && state.activeProject !== projectForThread) {
-          setActiveProject(state, projectForThread);
-        } else if (!(projectForThread || state.activeProject)) {
+        if (projectForThread) {
+          if (state.activeProject !== projectForThread) {
+            setActiveProject(state, projectForThread);
+          }
+        } else {
           await replyToCtx(
             ctx,
             "This topic is not linked to a project. Use /projects in General to set one up."
