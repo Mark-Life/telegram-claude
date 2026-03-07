@@ -39,7 +39,7 @@
     - In forum mode + project topic: set `state.activeProject` from `getProjectForThread(threadId)` instead of requiring `/projects` selection
   - Acceptance: State is correctly keyed by threadId in forum mode and userId in private mode. Each topic maintains independent state (activeProject, sessions, queue, composeMessages).
 
-- [ ] **Task 5: Update `src/claude.ts` — process key from userId to generic key**
+- [x] **Task 5: Update `src/claude.ts` — process key from userId to generic key**
   - Files: `src/claude.ts`
   - Changes:
     - Rename `telegramUserId` parameter to `processKey` in `runClaude`, `stopClaude`, `hasActiveProcess` signatures

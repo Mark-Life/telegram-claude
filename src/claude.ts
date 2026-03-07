@@ -228,15 +228,15 @@ function buildFileSystemPrompt() {
   ].join(" ");
 }
 
-/** Spawn claude CLI and yield streaming events, tracked per Telegram user */
+/** Spawn claude CLI and yield streaming events. processKey is userId (private) or threadId (forum) */
 export async function* runClaude(
-  telegramUserId: number,
+  processKey: number,
   prompt: string,
   projectDir: string,
   chatId: number,
   sessionId?: string
 ): AsyncGenerator<ClaudeEvent> {
-  const existing = userProcesses.get(telegramUserId);
+  const existing = userProcesses.get(processKey);
   if (existing) {
     if (!existing.ac.signal.aborted) {
       yield {
@@ -269,7 +269,7 @@ export async function* runClaude(
   const done = new Promise<void>((r) => {
     resolveCleanup = r;
   });
-  userProcesses.set(telegramUserId, { ac, done });
+  userProcesses.set(processKey, { ac, done });
 
   const { CLAUDECODE: _, ...restEnv } = process.env as Record<
     string,
@@ -343,14 +343,14 @@ export async function* runClaude(
     proc.kill();
     await proc.exited;
     await stderrDrain.catch(() => {});
-    userProcesses.delete(telegramUserId);
+    userProcesses.delete(processKey);
     resolveCleanup();
   }
 }
 
-/** Stop the active Claude process for a user */
-export function stopClaude(telegramUserId: number) {
-  const entry = userProcesses.get(telegramUserId);
+/** Stop the active Claude process by key (userId in private, threadId in forum) */
+export function stopClaude(processKey: number) {
+  const entry = userProcesses.get(processKey);
   if (!entry || entry.ac.signal.aborted) {
     return false;
   }
@@ -358,9 +358,9 @@ export function stopClaude(telegramUserId: number) {
   return true;
 }
 
-/** Check if a user has an active process */
-export function hasActiveProcess(telegramUserId: number) {
-  const entry = userProcesses.get(telegramUserId);
+/** Check if a process key has an active process */
+export function hasActiveProcess(processKey: number) {
+  const entry = userProcesses.get(processKey);
   return !!entry && !entry.ac.signal.aborted;
 }
 
