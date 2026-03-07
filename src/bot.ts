@@ -137,7 +137,7 @@ function isPrivateChat(ctx: Context) {
   return ctx.chat?.type === "private";
 }
 
-/** Get thread ID for routing replies in forum mode */
+/** Get thread ID for routing replies in forum mode. Defaults to General topic (1) in forum groups. */
 function getThreadId(ctx: Context): number | undefined {
   if (!_forumMode) {
     return undefined;
@@ -145,7 +145,7 @@ function getThreadId(ctx: Context): number | undefined {
   return (
     ctx.message?.message_thread_id ??
     ctx.callbackQuery?.message?.message_thread_id ??
-    undefined
+    1
   );
 }
 
