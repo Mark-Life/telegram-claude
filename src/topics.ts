@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -9,6 +10,7 @@ import { basename, join } from "node:path";
 import type { Api } from "grammy";
 
 interface TopicMapping {
+  pinnedRepoLinkId?: number;
   projectName: string;
   projectPath: string;
   threadId: number;
@@ -19,6 +21,8 @@ const TOPICS_FILE = join(DATA_DIR, "topics.json");
 
 let topicMappings: TopicMapping[] = [];
 const pendingTopics = new Map<string, Promise<number>>();
+const SSH_REMOTE_RE = /^git@github\.com:(.+?)(?:\.git)?$/;
+const GIT_SUFFIX_RE = /\.git$/;
 
 /** Load topic mappings from disk. Removes mappings for project paths that no longer exist. */
 export function loadTopicMappings() {
@@ -70,7 +74,12 @@ export function ensureTopic(api: Api, chatId: number, projectPath: string) {
     return pending;
   }
 
-  const promise = resolveOrCreateTopic(api, chatId, projectPath);
+  const promise = resolveOrCreateTopic(api, chatId, projectPath).then(
+    async (threadId) => {
+      await ensurePinnedRepoLink(api, chatId, threadId, projectPath);
+      return threadId;
+    }
+  );
   pendingTopics.set(projectPath, promise);
   return promise.finally(() => pendingTopics.delete(projectPath));
 }
@@ -123,6 +132,65 @@ export class TopicPermissionError extends Error {
       `Cannot create topic "${projectName}": bot needs "Manage Topics" permission in group settings.`
     );
     this.name = "TopicPermissionError";
+  }
+}
+
+/** Get GitHub repo URL from a project directory's git remote */
+function getRepoUrl(projectPath: string) {
+  try {
+    const raw = execSync("git remote get-url origin", {
+      cwd: projectPath,
+      encoding: "utf-8",
+      timeout: 5000,
+    }).trim();
+    // Convert SSH URL to HTTPS
+    const sshMatch = raw.match(SSH_REMOTE_RE);
+    if (sshMatch) {
+      return `https://github.com/${sshMatch[1]}`;
+    }
+    if (raw.startsWith("https://")) {
+      return raw.replace(GIT_SUFFIX_RE, "");
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Ensure the topic has a pinned message with the GitHub repo link */
+async function ensurePinnedRepoLink(
+  api: Api,
+  chatId: number,
+  threadId: number,
+  projectPath: string
+) {
+  const mapping = topicMappings.find((m) => m.threadId === threadId);
+  if (!mapping || mapping.pinnedRepoLinkId) {
+    return;
+  }
+
+  const repoUrl = getRepoUrl(projectPath);
+  if (!repoUrl) {
+    return;
+  }
+
+  try {
+    const projectName = basename(projectPath);
+    const msg = await api.sendMessage(
+      chatId,
+      `<a href="${repoUrl}">${projectName}</a>`,
+      {
+        message_thread_id: threadId,
+        parse_mode: "HTML",
+      }
+    );
+    await api
+      .pinChatMessage(chatId, msg.message_id, { disable_notification: true })
+      .catch(() => {});
+    mapping.pinnedRepoLinkId = msg.message_id;
+    saveTopicMappings();
+  } catch (e) {
+    console.error(`[topics] Failed to pin repo link in topic ${threadId}:`, e);
   }
 }
 
