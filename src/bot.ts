@@ -27,9 +27,9 @@ import {
 } from "./state";
 import { escapeHtml, splitText, streamToTelegram } from "./telegram";
 import {
-  TopicPermissionError,
   ensureTopic,
   getProjectForThread,
+  TopicPermissionError,
 } from "./topics";
 import { transcribeAudio } from "./transcribe";
 

@@ -5,6 +5,20 @@ import type { ClaudeEvent } from "./claude";
 const MAX_MSG_LENGTH = 4000;
 const EDIT_INTERVAL_MS = 1500;
 
+/** Retry a Telegram API call on 429 (rate limit). Waits retry_after seconds then retries once. */
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err: any) {
+    const retryAfter = err?.parameters?.retry_after;
+    if (retryAfter && typeof retryAfter === "number") {
+      await new Promise((r) => setTimeout(r, retryAfter * 1000));
+      return fn();
+    }
+    throw err;
+  }
+}
+
 /** Split text into chunks that fit within Telegram's message length limit, breaking at newline boundaries when possible */
 export function splitText(text: string, maxLen = MAX_MSG_LENGTH) {
   if (text.length <= maxLen) {
@@ -142,9 +156,11 @@ async function safeEditMessage(
 ) {
   const displayText = text || "...";
   try {
-    await ctx.api.editMessageText(chatId, messageId, displayText, {
-      parse_mode: "HTML",
-    });
+    await withRetry(() =>
+      ctx.api.editMessageText(chatId, messageId, displayText, {
+        parse_mode: "HTML",
+      })
+    );
     return true;
   } catch (err: any) {
     if (
@@ -154,7 +170,9 @@ async function safeEditMessage(
       return true;
     }
     try {
-      await ctx.api.editMessageText(chatId, messageId, rawText ?? displayText);
+      await withRetry(() =>
+        ctx.api.editMessageText(chatId, messageId, rawText ?? displayText)
+      );
       return false;
     } catch (err2: any) {
       if (
@@ -181,20 +199,24 @@ async function safeSendDraft(
 ) {
   const displayText = html || "...";
   try {
-    await ctx.api.sendMessageDraft(chatId, draftId, displayText, {
-      parse_mode: "HTML",
-      ...extraOpts,
-    });
+    await withRetry(() =>
+      ctx.api.sendMessageDraft(chatId, draftId, displayText, {
+        parse_mode: "HTML",
+        ...extraOpts,
+      })
+    );
   } catch (err: any) {
     if (err?.description?.includes("not modified")) {
       return;
     }
     try {
-      await ctx.api.sendMessageDraft(
-        chatId,
-        draftId,
-        rawText ?? displayText,
-        extraOpts
+      await withRetry(() =>
+        ctx.api.sendMessageDraft(
+          chatId,
+          draftId,
+          rawText ?? displayText,
+          extraOpts
+        )
       );
     } catch (err2: any) {
       if (!err2?.description?.includes("not modified")) {
@@ -214,12 +236,16 @@ async function safeSendMessage(
 ) {
   const displayText = html || "...";
   try {
-    return await ctx.api.sendMessage(chatId, displayText, {
-      parse_mode: "HTML",
-      ...extraOpts,
-    });
+    return await withRetry(() =>
+      ctx.api.sendMessage(chatId, displayText, {
+        parse_mode: "HTML",
+        ...extraOpts,
+      })
+    );
   } catch {
-    return await ctx.api.sendMessage(chatId, rawText ?? displayText, extraOpts);
+    return await withRetry(() =>
+      ctx.api.sendMessage(chatId, rawText ?? displayText, extraOpts)
+    );
   }
 }
 
@@ -260,8 +286,9 @@ export async function streamToTelegram(
   let toolLines: string[] = [];
   let thinkingText = "";
   let lastTextMessageId = 0;
-  let useDrafts: boolean | null = null;
-  const draftId = threadId ?? chatId;
+  const isPrivateChat = ctx.chat?.type === "private";
+  let useDrafts: boolean | null = isPrivateChat ? null : false;
+  const draftId = chatId;
 
   /** Send a new Telegram message and track its ID */
   const sendNew = async (text: string, parseMode?: "HTML") => {
@@ -269,7 +296,7 @@ export async function streamToTelegram(
     if (parseMode) {
       opts.parse_mode = parseMode;
     }
-    const sent = await ctx.api.sendMessage(chatId, text, opts);
+    const sent = await withRetry(() => ctx.api.sendMessage(chatId, text, opts));
     messageId = sent.message_id;
     lastEditTime = 0;
     pendingEdit = false;
@@ -446,12 +473,18 @@ export async function streamToTelegram(
           mode = await switchMode("text");
           if (useDrafts === null) {
             try {
-              await ctx.api.sendMessageDraft(chatId, draftId, "...", {
-                parse_mode: "HTML",
-                ...threadOpts,
-              });
+              await withRetry(() =>
+                ctx.api.sendMessageDraft(chatId, draftId, "...", {
+                  parse_mode: "HTML",
+                  ...threadOpts,
+                })
+              );
               useDrafts = true;
-            } catch {
+            } catch (draftErr) {
+              console.warn(
+                "sendMessageDraft not supported, falling back to editMessageText:",
+                (draftErr as any)?.description ?? draftErr
+              );
               useDrafts = false;
               await sendNew("...");
             }

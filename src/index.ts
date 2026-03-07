@@ -2,11 +2,7 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createBot, periodicCleanup } from "./bot";
 import { stopAll } from "./claude";
-import {
-  TopicPermissionError,
-  ensureTopic,
-  loadTopicMappings,
-} from "./topics";
+import { ensureTopic, loadTopicMappings, TopicPermissionError } from "./topics";
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ALLOWED_USER_ID = process.env.ALLOWED_USER_ID;
@@ -146,9 +142,7 @@ bot.start({
         .catch((e) => {
           console.error("Failed to auto-create topics:", e);
           if (e instanceof TopicPermissionError) {
-            bot.api
-              .sendMessage(chatId, `⚠️ ${e.message}`)
-              .catch(() => {});
+            bot.api.sendMessage(chatId, `⚠️ ${e.message}`).catch(() => {});
           }
         });
     }
