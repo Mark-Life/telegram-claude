@@ -176,19 +176,26 @@ async function safeSendDraft(
   chatId: number,
   draftId: number,
   html: string,
-  rawText?: string
+  rawText?: string,
+  extraOpts?: Record<string, unknown>
 ) {
   const displayText = html || "...";
   try {
     await ctx.api.sendMessageDraft(chatId, draftId, displayText, {
       parse_mode: "HTML",
+      ...extraOpts,
     });
   } catch (err: any) {
     if (err?.description?.includes("not modified")) {
       return;
     }
     try {
-      await ctx.api.sendMessageDraft(chatId, draftId, rawText ?? displayText);
+      await ctx.api.sendMessageDraft(
+        chatId,
+        draftId,
+        rawText ?? displayText,
+        extraOpts
+      );
     } catch (err2: any) {
       if (!err2?.description?.includes("not modified")) {
         throw err2;
@@ -319,7 +326,8 @@ export async function streamToTelegram(
         chatId,
         draftId,
         markdownToTelegramHtml(text),
-        text
+        text,
+        threadOpts
       );
     } else {
       await safeEditMessage(
@@ -376,7 +384,7 @@ export async function streamToTelegram(
 
     const { html, plainText } = renderThinkingHtml(thinkingText);
     if (useDrafts) {
-      await safeSendDraft(ctx, chatId, draftId, html, plainText);
+      await safeSendDraft(ctx, chatId, draftId, html, plainText, threadOpts);
     } else {
       await safeEditMessage(ctx, chatId, messageId, html, plainText);
     }
@@ -440,6 +448,7 @@ export async function streamToTelegram(
             try {
               await ctx.api.sendMessageDraft(chatId, draftId, "...", {
                 parse_mode: "HTML",
+                ...threadOpts,
               });
               useDrafts = true;
             } catch {
@@ -470,7 +479,8 @@ export async function streamToTelegram(
             chatId,
             draftId,
             "<i>Thinking...</i>",
-            "Thinking..."
+            "Thinking...",
+            threadOpts
           );
         } else {
           await sendNew("<i>Thinking...</i>", "HTML");
@@ -484,7 +494,8 @@ export async function streamToTelegram(
               chatId,
               draftId,
               "<i>Thinking...</i>",
-              "Thinking..."
+              "Thinking...",
+              threadOpts
             );
           } else {
             await sendNew("<i>Thinking...</i>", "HTML");
