@@ -1,8 +1,10 @@
 import { cleanupStaleState, createBot } from "./bot";
 import { stopAll } from "./claude";
+import { loadTopicMappings } from "./topics";
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ALLOWED_USER_ID = process.env.ALLOWED_USER_ID;
+const ALLOWED_CHAT_ID = process.env.ALLOWED_CHAT_ID;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const PROJECTS_DIR = process.env.PROJECTS_DIR || "/home/agent/projects";
 
@@ -25,9 +27,22 @@ if (Number.isNaN(userId)) {
   process.exit(1);
 }
 
-const CLEANUP_INTERVAL = 3 * 60 * 60 * 1000;
+const chatId = ALLOWED_CHAT_ID ? Number.parseInt(ALLOWED_CHAT_ID, 10) : userId;
+if (Number.isNaN(chatId)) {
+  console.error("ALLOWED_CHAT_ID must be a number");
+  process.exit(1);
+}
 
-const bot = createBot(BOT_TOKEN, userId, PROJECTS_DIR);
+const forumMode = chatId < 0;
+
+if (forumMode) {
+  loadTopicMappings();
+  console.log(`Forum mode enabled (chat ${chatId})`);
+}
+
+const CLEANUP_INTERVAL = 3 * 60 * 1000;
+
+const bot = createBot(BOT_TOKEN, userId, chatId, forumMode, PROJECTS_DIR);
 
 bot.catch((err) => {
   console.error("Bot error:", err);
@@ -68,6 +83,7 @@ bot.start({
       { command: "compose", description: "Start collecting messages" },
       { command: "send", description: "Send composed messages" },
       { command: "cancel", description: "Cancel compose mode" },
+      { command: "chatid", description: "Show chat ID" },
     ];
     const scopes = [
       { type: "default" as const },
@@ -79,7 +95,7 @@ bot.start({
       scopes.map((scope) => bot.api.setMyCommands(commands, { scope }))
     ).catch((e) => console.error("Failed to set bot commands:", e));
     bot.api
-      .sendMessage(userId, `Bot started at ${new Date().toLocaleString()}`)
+      .sendMessage(chatId, `Bot started at ${new Date().toLocaleString()}`)
       .catch((e) => console.error("Failed to send startup message:", e));
   },
 });
