@@ -32,7 +32,9 @@ export function loadTopicMappings() {
       );
     }
     topicMappings = valid;
-    if (valid.length < loaded.length) saveTopicMappings();
+    if (valid.length < loaded.length) {
+      saveTopicMappings();
+    }
   } catch {
     topicMappings = [];
   }
@@ -47,7 +49,7 @@ function saveTopicMappings() {
 }
 
 /** Remove a stale topic mapping by thread ID */
-export function removeTopicMapping(threadId: number) {
+function removeTopicMapping(threadId: number) {
   const idx = topicMappings.findIndex((m) => m.threadId === threadId);
   if (idx !== -1) {
     topicMappings.splice(idx, 1);
@@ -111,14 +113,4 @@ export function getProjectForThread(threadId: number) {
     return undefined;
   }
   return mapping.projectPath;
-}
-
-/** Get thread ID for a project path */
-export function getThreadForProject(projectPath: string) {
-  return topicMappings.find((m) => m.projectPath === projectPath)?.threadId;
-}
-
-/** Get all topic mappings */
-export function getAllTopicMappings() {
-  return topicMappings;
 }

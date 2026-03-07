@@ -28,7 +28,7 @@ const DRAFT_INTERVAL_MS = 300;
 const TYPING_INTERVAL_MS = 5000;
 
 /** Escape HTML special characters */
-function escapeHtml(text: string) {
+export function escapeHtml(text: string) {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

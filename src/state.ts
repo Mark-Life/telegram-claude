@@ -83,7 +83,10 @@ function saveState(
 ) {
   mkdirSync(DATA_DIR, { recursive: true });
 
-  if (_forumMode && key !== undefined) {
+  if (_forumMode) {
+    if (key === undefined) {
+      return;
+    }
     _forumStates[String(key)] = {
       activeProject,
       sessions: Object.fromEntries(sessions),

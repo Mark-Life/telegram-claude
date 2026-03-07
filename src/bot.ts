@@ -25,7 +25,7 @@ import {
   setStateForumMode,
   updateSession,
 } from "./state";
-import { splitText, streamToTelegram } from "./telegram";
+import { escapeHtml, splitText, streamToTelegram } from "./telegram";
 import { ensureTopic, getProjectForThread } from "./topics";
 import { transcribeAudio } from "./transcribe";
 
@@ -70,14 +70,6 @@ interface MediaGroupEntry {
 
 /** Pending media groups keyed by media_group_id */
 const mediaGroupBuffers = new Map<string, MediaGroupEntry>();
-
-/** Escape HTML special characters for Telegram */
-function escapeHtml(text: string) {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
 
 /** Persistent reply keyboard with all commands */
 const mainKeyboard = new Keyboard()
@@ -601,13 +593,15 @@ export function createBot(
   });
 
   bot.callbackQuery(/^compose_send:(.+)$/, async (ctx) => {
-    const state = getState(getStateKey(ctx));
+    const key = Number(ctx.match[1]);
+    const state = getState(key);
     await ctx.answerCallbackQuery();
     await executeSend(ctx, state);
   });
 
   bot.callbackQuery(/^compose_cancel:(.+)$/, async (ctx) => {
-    const state = getState(getStateKey(ctx));
+    const key = Number(ctx.match[1]);
+    const state = getState(key);
     await ctx.answerCallbackQuery();
     await executeCancel(ctx, state);
   });
@@ -785,7 +779,7 @@ export function createBot(
   }
 
   bot.callbackQuery(/^plan_new:(.+)$/, async (ctx) => {
-    const stateKey = getStateKey(ctx);
+    const stateKey = Number(ctx.match[1]);
     const state = getState(stateKey);
     const plan = state.pendingPlan;
     if (!plan) {
@@ -815,7 +809,7 @@ export function createBot(
   });
 
   bot.callbackQuery(/^plan_resume:(.+)$/, async (ctx) => {
-    const stateKey = getStateKey(ctx);
+    const stateKey = Number(ctx.match[1]);
     const state = getState(stateKey);
     const plan = state.pendingPlan;
     if (!plan) {
@@ -841,7 +835,7 @@ export function createBot(
   });
 
   bot.callbackQuery(/^plan_modify:(.+)$/, async (ctx) => {
-    const stateKey = getStateKey(ctx);
+    const stateKey = Number(ctx.match[1]);
     const state = getState(stateKey);
     if (!state.pendingPlan) {
       await ctx.answerCallbackQuery({ text: "No pending plan" });
@@ -859,7 +853,7 @@ export function createBot(
   });
 
   bot.callbackQuery(/^plan_cancel:(.+)$/, async (ctx) => {
-    const stateKey = getStateKey(ctx);
+    const stateKey = Number(ctx.match[1]);
     const state = getState(stateKey);
     if (!state.pendingPlan) {
       await ctx.answerCallbackQuery({ text: "No pending plan" });
