@@ -130,13 +130,12 @@ function setForumMode(enabled: boolean) {
   _forumMode = enabled;
 }
 
-/** Get the state key: threadId in forum mode, userId in private mode */
+/** Get the state key: threadId in forum mode, userId in private mode. Returns 0 for General topic. */
 function getStateKey(ctx: Context) {
   if (_forumMode) {
     return (
       ctx.message?.message_thread_id ??
       ctx.callbackQuery?.message?.message_thread_id ??
-      ctx.chat?.id ??
       0
     );
   }
@@ -766,10 +765,18 @@ export function createBot(
   bot.callbackQuery(/^force_send:(.+)$/, async (ctx) => {
     const keyFromData = Number.parseInt(ctx.match?.[1], 10);
     const stateKey = Number.isNaN(keyFromData) ? getStateKey(ctx) : keyFromData;
+    const state = getState(stateKey);
     const stopped = stopClaude(stateKey);
-    await ctx.answerCallbackQuery({
-      text: stopped ? "Stopping current task..." : "No active process",
-    });
+    const hadQueue = state.queue.length > 0;
+    state.queue = [];
+    state.pendingPlan = undefined;
+    state.composeMessages = undefined;
+    await cleanupQueueStatus(state, ctx);
+    await cleanupComposeStatus(state, ctx);
+    const msg = stopped
+      ? `Stopped.${hadQueue ? " Queue cleared." : ""}`
+      : "No active process.";
+    await ctx.answerCallbackQuery({ text: msg });
   });
 
   bot.callbackQuery(/^clear_queue:(.+)$/, async (ctx) => {
@@ -934,7 +941,7 @@ export function createBot(
         const projectForThread = getProjectForThread(threadId);
         if (projectForThread && state.activeProject !== projectForThread) {
           setActiveProject(state, projectForThread);
-        } else if (!projectForThread && !state.activeProject) {
+        } else if (!(projectForThread || state.activeProject)) {
           await replyToCtx(
             ctx,
             "This topic is not linked to a project. Use /projects in General to set one up."
