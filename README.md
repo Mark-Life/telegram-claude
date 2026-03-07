@@ -4,7 +4,7 @@ Telegram bot interface for Claude Code on a VPS. Message the bot from any device
 
 ## Features
 
-- **Project switching** — select any project directory via inline keyboard, auto-unpins old messages
+- **Two operation modes** — private DM mode (project switching via commands) or forum mode (one topic per project)
 - **Streaming responses** — real-time draft messages with edit-based fallback
 - **Session continuity** — follow-up messages continue the same Claude conversation
 - **Message queuing** — messages sent while Claude is busy are queued and processed in order
@@ -17,6 +17,23 @@ Telegram bot interface for Claude Code on a VPS. Message the bot from any device
 - **Cost & duration tracking** — metadata footer on each response
 - **Compose mode** — collect multiple messages (text, voice, forwarded, files, photos) into a single prompt with `/compose` and `/send`
 - **Access control** — single authorized user via Telegram user ID
+
+### Operation Modes
+
+#### Private DM Mode (default)
+
+Message the bot directly. Use `/projects` to switch between project directories via inline keyboard. One active project at a time, switchable at any point.
+
+#### Forum Topics Mode
+
+Use the bot in a Telegram supergroup with [forum topics](https://telegram.org/blog/topics-in-groups-collectible-usernames#topics-in-groups) enabled. Each project gets its own topic — messages in a topic are automatically routed to the corresponding project. No need to manually switch projects.
+
+- **Setup**: Set `ALLOWED_CHAT_ID` to your supergroup's chat ID (use `/chatid` in the group to find it)
+- **Auto-detection**: The bot checks if the chat is a forum-enabled supergroup on startup
+- **Auto-topic creation**: On boot, topics are created for all existing project directories
+- **General topic**: Acts as the control plane — use `/projects` here to create topics for new projects. Messages in General run Claude in the parent projects directory (same as the "General" project in DM mode)
+- **Per-topic sessions**: Each topic maintains independent Claude sessions, compose state, and message queues
+- **Project routing**: Simply switch Telegram topics to switch projects — no commands needed
 
 ## Prerequisites
 
@@ -48,6 +65,9 @@ BOT_TOKEN=your_bot_token_here
 ALLOWED_USER_ID=your_telegram_user_id
 PROJECTS_DIR=/home/agent/projects
 GROQ_API_KEY=your_groq_api_key
+
+# Optional: for forum topics mode (see "Operation Modes" above)
+ALLOWED_CHAT_ID=-100xxxxxxxxxx
 ```
 
 ### 4. Install & Run
@@ -102,7 +122,8 @@ systemctl --user stop telegram-claude      # stop
 
 | Command | Description |
 |-----------|--------------------------------------|
-| `/projects` | Select active project directory |
+| `/projects` | Select active project directory (DM) or create project topics (forum General) |
+| `/chatid` | Show current chat ID (useful for forum mode setup) |
 | `/history` | Browse and resume past Claude sessions |
 | `/stop` | Kill running Claude process |
 | `/status` | Show active project & process state |
