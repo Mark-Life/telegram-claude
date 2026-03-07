@@ -7,3 +7,6 @@ bun.lock
 
 # persisted bot state
 .data/
+
+# user uploaded files
+user-sent-files/
