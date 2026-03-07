@@ -28,38 +28,53 @@ const STATE_FILE = join(DATA_DIR, "state.json");
 
 let _forumMode = false;
 let _forumStates: Record<string, PersistedState> = {};
+let _forumStatesLoaded = false;
 
 /** Set forum mode for state persistence */
 export function setStateForumMode(enabled: boolean) {
   _forumMode = enabled;
 }
 
-/** Load persisted state from disk. Returns null if file missing or corrupt. */
-export function loadPersistedState(key?: number) {
+/** Load forum states from disk once, caching the result */
+function loadForumStates() {
+  if (_forumStatesLoaded) {
+    return;
+  }
+  _forumStatesLoaded = true;
   try {
     const text = readFileSync(STATE_FILE, "utf-8");
     const parsed = JSON.parse(text);
-
-    if (_forumMode) {
-      if (parsed.forumMode) {
-        _forumStates = (parsed as ForumPersistedState).topics ?? {};
-      } else {
-        // Migrate: private state on disk but forum mode now active — ignore old private state
-        _forumStates = {};
-      }
-      if (key !== undefined) {
-        const topicState = _forumStates[String(key)];
-        if (topicState) {
-          return {
-            activeProject: existsSync(topicState.activeProject)
-              ? topicState.activeProject
-              : "",
-            sessions: new Map(Object.entries(topicState.sessions ?? {})),
-          };
-        }
-      }
-      return null;
+    if (parsed.forumMode) {
+      _forumStates = (parsed as ForumPersistedState).topics ?? {};
+    } else {
+      _forumStates = {};
     }
+  } catch {
+    _forumStates = {};
+  }
+}
+
+/** Load persisted state from disk. Returns null if file missing or corrupt. */
+export function loadPersistedState(key?: number) {
+  if (_forumMode) {
+    loadForumStates();
+    if (key !== undefined) {
+      const topicState = _forumStates[String(key)];
+      if (topicState) {
+        return {
+          activeProject: existsSync(topicState.activeProject)
+            ? topicState.activeProject
+            : "",
+          sessions: new Map(Object.entries(topicState.sessions ?? {})),
+        };
+      }
+    }
+    return null;
+  }
+
+  try {
+    const text = readFileSync(STATE_FILE, "utf-8");
+    const parsed = JSON.parse(text);
 
     // Private mode — ignore forum-format state from previous run
     if (parsed.forumMode) {

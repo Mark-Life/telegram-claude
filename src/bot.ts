@@ -212,6 +212,13 @@ export function createBot(
   setForumMode(forumMode);
   setStateForumMode(forumMode);
 
+  // /chatid — unprotected so any user can discover their chat ID
+  bot.command("chatid", async (ctx) => {
+    await replyToCtx(ctx, `Chat ID: <code>${ctx.chat.id}</code>`, {
+      parse_mode: "HTML",
+    });
+  });
+
   // Access control middleware
   const botId = Number.parseInt(token.split(":")[0], 10);
   bot.use(async (ctx, next) => {
@@ -226,12 +233,6 @@ export function createBot(
       return;
     }
     await next();
-  });
-
-  bot.command("chatid", async (ctx) => {
-    await replyToCtx(ctx, `Chat ID: <code>${ctx.chat.id}</code>`, {
-      parse_mode: "HTML",
-    });
   });
 
   const buttonToCommand: Record<string, string> = {
@@ -721,18 +722,16 @@ export function createBot(
     }
   });
 
-  bot.callbackQuery(/^force_send:(.+)$/, async (ctx) => {
-    const keyFromData = Number.parseInt(ctx.match?.[1], 10);
-    const stateKey = Number.isNaN(keyFromData) ? getStateKey(ctx) : keyFromData;
+  bot.callbackQuery(/^force_send:(\d+)$/, async (ctx) => {
+    const stateKey = Number.parseInt(ctx.match![1], 10);
     const stopped = stopClaude(stateKey);
     await ctx.answerCallbackQuery({
       text: stopped ? "Stopping current task..." : "No active process",
     });
   });
 
-  bot.callbackQuery(/^clear_queue:(.+)$/, async (ctx) => {
-    const keyFromData = Number.parseInt(ctx.match?.[1], 10);
-    const stateKey = Number.isNaN(keyFromData) ? getStateKey(ctx) : keyFromData;
+  bot.callbackQuery(/^clear_queue:(\d+)$/, async (ctx) => {
+    const stateKey = Number.parseInt(ctx.match![1], 10);
     const state = getState(stateKey);
     const count = state.queue.length;
     state.queue = [];

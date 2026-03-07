@@ -24,8 +24,14 @@ const pendingTopics = new Map<string, Promise<number>>();
 export function loadTopicMappings() {
   try {
     const text = readFileSync(TOPICS_FILE, "utf-8");
-    const loaded = JSON.parse(text) as TopicMapping[];
-    const valid = loaded.filter((m) => existsSync(m.projectPath));
+    const loaded = JSON.parse(text);
+    if (!Array.isArray(loaded)) {
+      topicMappings = [];
+      return;
+    }
+    const valid = (loaded as TopicMapping[]).filter((m) =>
+      existsSync(m.projectPath)
+    );
     if (valid.length < loaded.length) {
       console.log(
         `[topics] Removed ${loaded.length - valid.length} stale mapping(s) with missing project paths`
