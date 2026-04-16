@@ -19,6 +19,20 @@ type ContentBlockDelta =
 type StreamEvent =
   | { type: "system"; subtype: "init"; session_id: string }
   | {
+      type: "system";
+      subtype: "task_started";
+      task_id: string;
+      description: string;
+    }
+  | {
+      type: "system";
+      subtype: "task_notification";
+      task_id: string;
+      status: string;
+      summary: string;
+      usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
+    }
+  | {
       type: "stream_event";
       event: {
         type: "content_block_start";
@@ -63,6 +77,16 @@ export type ClaudeEvent =
   | { kind: "thinking_delta"; text: string }
   | { kind: "thinking_done"; durationMs: number }
   | { kind: "plan_ready"; planPath: string }
+  | { kind: "agent_started"; taskId: string; description: string }
+  | {
+      kind: "agent_done";
+      taskId: string;
+      description: string;
+      status: string;
+      durationMs?: number;
+      totalTokens?: number;
+      toolUses?: number;
+    }
   | {
       kind: "result";
       text: string;
@@ -201,6 +225,28 @@ function createStreamParser() {
         currentBlockType = null;
       } else if (parsed.type === "system" && parsed.subtype === "init") {
         yield { kind: "session_init", sessionId: parsed.session_id };
+      } else if (
+        parsed.type === "system" &&
+        parsed.subtype === "task_started"
+      ) {
+        yield {
+          kind: "agent_started",
+          taskId: parsed.task_id,
+          description: parsed.description,
+        };
+      } else if (
+        parsed.type === "system" &&
+        parsed.subtype === "task_notification"
+      ) {
+        yield {
+          kind: "agent_done",
+          taskId: parsed.task_id,
+          description: parsed.summary,
+          status: parsed.status,
+          durationMs: parsed.usage?.duration_ms,
+          totalTokens: parsed.usage?.total_tokens,
+          toolUses: parsed.usage?.tool_uses,
+        };
       } else if (parsed.type === "result") {
         yield {
           kind: "result",

@@ -496,6 +496,32 @@ export async function streamToTelegram(
         }
         thinkingText = "";
         mode = "none";
+      } else if (event.kind === "agent_started") {
+        if (mode !== "tools") {
+          mode = await switchMode("tools");
+          await sendNew("...");
+        }
+        toolLines.push(`\u23F3 Agent: ${event.description}`);
+        await flushTools().catch(() => {});
+      } else if (event.kind === "agent_done") {
+        const icon = event.status === "completed" ? "\u2705" : "\u274C";
+        let line = `${icon} Agent: ${event.description}`;
+        const parts: string[] = [];
+        if (event.durationMs !== undefined) {
+          parts.push(`${(event.durationMs / 1000).toFixed(1)}s`);
+        }
+        if (event.totalTokens !== undefined) {
+          parts.push(`${(event.totalTokens / 1000).toFixed(1)}k tokens`);
+        }
+        if (event.toolUses !== undefined) {
+          parts.push(
+            `${event.toolUses} tool call${event.toolUses !== 1 ? "s" : ""}`
+          );
+        }
+        if (parts.length > 0) {
+          line += ` (${parts.join(", ")})`;
+        }
+        await safeSendMessage(ctx, chatId, `<i>${escapeHtml(line)}</i>`, line);
       } else if (event.kind === "session_init") {
         result.sessionId = event.sessionId;
       } else if (event.kind === "plan_ready") {
