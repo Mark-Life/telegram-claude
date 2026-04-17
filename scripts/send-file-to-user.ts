@@ -10,8 +10,9 @@ const BLOCKED_PATTERNS = [
 ];
 
 const filePath = process.argv[2];
+const topicId = process.argv[3];
 if (!filePath) {
-  console.error("Usage: send-file-to-user.ts <filepath>");
+  console.error("Usage: send-file-to-user.ts <filepath> [topic-id]");
   process.exit(1);
 }
 
@@ -37,6 +38,9 @@ if (blocked) {
 
 const form = new FormData();
 form.append("chat_id", chatId);
+if (topicId) {
+  form.append("message_thread_id", topicId);
+}
 form.append("document", file, basename);
 
 const res = await fetch(

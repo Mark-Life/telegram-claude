@@ -12,35 +12,110 @@ interface PersistedState {
   sessions: Record<string, string>;
 }
 
+interface ForumPersistedState {
+  forumMode: true;
+  topics: Record<string, PersistedState>;
+}
+
 interface BotState {
   activeProject: string;
+  key?: number;
   sessions: Map<string, string>;
 }
 
 const DATA_DIR = join(import.meta.dirname, "..", ".data");
 const STATE_FILE = join(DATA_DIR, "state.json");
 
-/** Load persisted state from disk. Returns null if file missing or corrupt. */
-export function loadPersistedState() {
+let _forumMode = false;
+let _forumStates: Record<string, PersistedState> = {};
+let _forumStatesLoaded = false;
+
+/** Set forum mode for state persistence */
+export function setStateForumMode(enabled: boolean) {
+  _forumMode = enabled;
+}
+
+/** Load forum states from disk once, caching the result */
+function loadForumStates() {
+  if (_forumStatesLoaded) {
+    return;
+  }
+  _forumStatesLoaded = true;
   try {
     const text = readFileSync(STATE_FILE, "utf-8");
-    const parsed = JSON.parse(text) as PersistedState;
+    const parsed = JSON.parse(text);
+    if (parsed.forumMode) {
+      _forumStates = (parsed as ForumPersistedState).topics ?? {};
+    } else {
+      _forumStates = {};
+    }
+  } catch {
+    _forumStates = {};
+  }
+}
 
+/** Load persisted state from disk. Returns null if file missing or corrupt. */
+export function loadPersistedState(key?: number) {
+  if (_forumMode) {
+    loadForumStates();
+    if (key !== undefined) {
+      const topicState = _forumStates[String(key)];
+      if (topicState) {
+        return {
+          activeProject: existsSync(topicState.activeProject)
+            ? topicState.activeProject
+            : "",
+          sessions: new Map(Object.entries(topicState.sessions ?? {})),
+        };
+      }
+    }
+    return null;
+  }
+
+  try {
+    const text = readFileSync(STATE_FILE, "utf-8");
+    const parsed = JSON.parse(text);
+
+    // Private mode — ignore forum-format state from previous run
+    if (parsed.forumMode) {
+      return null;
+    }
+
+    const ps = parsed as PersistedState;
     const activeProject =
-      parsed.activeProject && existsSync(parsed.activeProject)
-        ? parsed.activeProject
-        : "";
-
-    const sessions = new Map(Object.entries(parsed.sessions ?? {}));
-
+      ps.activeProject && existsSync(ps.activeProject) ? ps.activeProject : "";
+    const sessions = new Map(Object.entries(ps.sessions ?? {}));
     return { activeProject, sessions };
   } catch {
     return null;
   }
 }
 
-function saveState(activeProject: string, sessions: Map<string, string>) {
+function saveState(
+  activeProject: string,
+  sessions: Map<string, string>,
+  key?: number
+) {
   mkdirSync(DATA_DIR, { recursive: true });
+
+  if (_forumMode) {
+    if (key === undefined) {
+      return;
+    }
+    _forumStates[String(key)] = {
+      activeProject,
+      sessions: Object.fromEntries(sessions),
+    };
+    const data: ForumPersistedState = {
+      forumMode: true,
+      topics: _forumStates,
+    };
+    const tmp = `${STATE_FILE}.tmp`;
+    writeFileSync(tmp, JSON.stringify(data, null, 2));
+    renameSync(tmp, STATE_FILE);
+    return;
+  }
+
   const data: PersistedState = {
     activeProject,
     sessions: Object.fromEntries(sessions),
@@ -53,7 +128,7 @@ function saveState(activeProject: string, sessions: Map<string, string>) {
 /** Set active project and persist to disk. */
 export function setActiveProject(state: BotState, path: string) {
   state.activeProject = path;
-  saveState(state.activeProject, state.sessions);
+  saveState(state.activeProject, state.sessions, state.key);
 }
 
 /** Update or delete a session mapping and persist to disk. */
@@ -67,5 +142,5 @@ export function updateSession(
   } else {
     state.sessions.delete(projectPath);
   }
-  saveState(state.activeProject, state.sessions);
+  saveState(state.activeProject, state.sessions, state.key);
 }
