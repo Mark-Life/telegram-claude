@@ -14,7 +14,11 @@ import {
   listBranches,
   listOpenPRs,
 } from "./git";
-import { clearSessionCache, getSessionProject, listAllSessions } from "./history";
+import {
+  clearSessionCache,
+  getSessionProject,
+  listAllSessions,
+} from "./history";
 import { loadPersistedState, setActiveProject, updateSession } from "./state";
 import { splitText, streamToTelegram } from "./telegram";
 import { transcribeAudio } from "./transcribe";
@@ -1126,7 +1130,9 @@ export function createBot(
   async function flushMediaGroup(groupId: string) {
     const group = mediaGroupBuffers.get(groupId);
     mediaGroupBuffers.delete(groupId);
-    if (!group) return;
+    if (!group) {
+      return;
+    }
 
     const { ctx, photos, caption } = group;
     const state = getState(getUserId(ctx));
@@ -1142,7 +1148,10 @@ export function createBot(
 
       if (state.composeMessages) {
         for (const part of photoParts) {
-          state.composeMessages.push({ type: "photo", content: `${part}\n${caption}`.trim() });
+          state.composeMessages.push({
+            type: "photo",
+            content: `${part}\n${caption}`.trim(),
+          });
         }
         await updateComposeStatus(ctx, state);
       } else {
@@ -1173,9 +1182,15 @@ export function createBot(
         if (ctx.message.caption) {
           existing.caption = ctx.message.caption;
         }
-        existing.timer = setTimeout(() => flushMediaGroup(mediaGroupId), MEDIA_GROUP_DEBOUNCE_MS);
+        existing.timer = setTimeout(
+          () => flushMediaGroup(mediaGroupId),
+          MEDIA_GROUP_DEBOUNCE_MS
+        );
       } else {
-        const timer = setTimeout(() => flushMediaGroup(mediaGroupId), MEDIA_GROUP_DEBOUNCE_MS);
+        const timer = setTimeout(
+          () => flushMediaGroup(mediaGroupId),
+          MEDIA_GROUP_DEBOUNCE_MS
+        );
         mediaGroupBuffers.set(mediaGroupId, {
           photos: [{ fileId: largest.file_id, filename }],
           caption: ctx.message.caption ?? "",
